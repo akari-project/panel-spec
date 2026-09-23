@@ -19,7 +19,7 @@
 - `make gen`：`buf generate`、`tools/schemagen`、`openapi-typescript` 生成 `gen/ts/*.d.ts`。
 - `make vectors`：重新生成测试向量。
 - `make lint`：buf lint、两份 OpenAPI 的 Redocly lint、`checkapi`、`checkschema`、SPDX 头检查。
-- `make breaking`：`buf breaking --against '.git#branch=main'`；oasdiff 对比上一个 tag（没有 tag 时跳过）。
+- `make breaking`：`buf breaking` 与 oasdiff 都对比 HEAD 之前的最近一个 tag（在 tag 提交上构建时也不会与自己比较）；还没有更早的 tag 时，`buf breaking` 对比 main 分支（`BREAKING_AGAINST`），oasdiff 跳过。
 - `make test`：`go test -race ./...`。
 - `make vulncheck`：govulncheck。
 - `make licenses`：go-licenses 按 spec/42 42.2 允许清单（MIT、BSD-2-Clause、BSD-3-Clause、Apache-2.0、ISC）检查 Go 依赖；npm 工具只在构建期经 npx 使用，不在扫描范围内。
