@@ -1,0 +1,7 @@
+{
+  "transport": "httpupgrade",
+  "security": "none",
+  "httpupgrade": {
+    "path": "/upgrade"
+  }
+}

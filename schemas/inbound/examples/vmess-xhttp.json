@@ -1,0 +1,8 @@
+{
+  "transport": "xhttp",
+  "security": "none",
+  "xhttp": {
+    "path": "/vx",
+    "mode": "packet-up"
+  }
+}

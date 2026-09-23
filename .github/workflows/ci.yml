@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+# panel-spec CI（spec/42 42.2）：make ci（含依赖许可证扫描 make licenses）、REUSE lint、govulncheck。
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # buf breaking 需要 main 分支，oasdiff 需要 tag。
+          fetch-depth: 0
+      - name: 建立本地 main 分支
+        run: git show-ref --verify --quiet refs/heads/main || git branch main origin/main
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: bufbuild/buf-action@v1
+        with:
+          version: 1.73.0
+          setup_only: true
+      - name: 安装 protoc-gen-go
+        run: |
+          make tools
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - run: make ci
+
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: fsfe/reuse-action@v5
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make vulncheck

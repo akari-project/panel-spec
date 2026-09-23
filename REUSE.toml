@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# REUSE 登记（spec/02 CONV-25）。源文件在头部带 SPDX-License-Identifier；
+# 下列无法或不宜加注释头的文件在此登记。
+version = 1
+
+# 版权声明对全部文件生效，与文件头中的许可证标识合并。
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "akari-project contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+# 生成代码、测试向量、JSON Schema 与示例、依赖锁文件、Claude Code 配置。
+[[annotations]]
+path = [
+  "gen/**",
+  "testdata/**",
+  "schemas/**",
+  "tools/**/testdata/**",
+  "go.mod",
+  "go.sum",
+  ".claude/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "akari-project contributors"
+SPDX-License-Identifier = "Apache-2.0"

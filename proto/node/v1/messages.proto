@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+// 节点协议的业务消息。语义见 spec/20、spec/21、spec/22。
+//
+// 带 config_version 的指令按 spec/20 NODE-23 应用：
+//   - SyncFull：版本高于本地才应用；
+//   - 其他指令：等于本地 + 1 才应用；不大于本地只确认；跳号则请求全量同步。
 syntax = "proto3";
 
 package node.v1;
@@ -6,35 +11,60 @@ package node.v1;
 import "node/v1/common.proto";
 
 message Credential {
-  string id = 1;          // proxy_credentials.id
-  string account_id = 2;  // 用于流量归属
-  bytes secret = 3;       // 按协议解释：UUID、密码等
+  string id = 1; // proxy_credentials.id
+  string account_id = 2; // 用于流量归属与租约
+  bytes secret = 3; // 按协议解释：UUID、密码等。节点本地保持加密形态（spec/21 AGT-05）
   uint32 speed_limit_mbps = 4; // 0 表示不限
-  int64 expires_at_ms = 5;     // 本地兜底：到期自动移除
+  int64 expires_at_ms = 5; // 本地兜底：到期自动移除，并关闭连接（spec/20 NODE-24）
+  // 仅第三方共用凭据：活跃来源数上限，0 表示不限（spec/22 ACC-12，M4-06）。
+  uint32 max_sources = 6;
 }
 
 message Inbound {
   string tag = 1;
   Protocol protocol = 2;
   uint32 listen_port = 3;
-  bytes settings_json = 4; // 传输、TLS、Reality 等，结构见 spec/21
+  // 传输、TLS、Reality 等，结构见 schemas/inbound/<protocol>-<transport>.schema.json（spec/21 AGT-13）。
+  bytes settings_json = 4;
   uint64 version = 5;
+  Transport transport = 6;
+}
+
+// 离线行为参数（spec/22 ACC-19）。
+message OfflinePolicy {
+  uint64 offline_lease_bytes = 1; // 默认 64 MiB
+  uint32 offline_max_seconds = 2; // 默认 86400
+}
+
+// 节点的完整配置状态。SyncFull 以序列化后的原始字节携带。
+message Snapshot {
+  uint64 config_version = 1;
+  // 控制面为该节点选定的内核；与当前不同时 Agent 先切换内核再应用入站（spec/21 AGT-07）。
+  KernelType kernel = 2;
+  repeated Inbound inbounds = 3;
+  repeated Credential credentials = 4;
+  bytes routes_json = 5;
+  // 以 K_dns = HKDF-SHA256(ikm = PSK, salt = 空（等价于 32 个零字节）, info = "akari-dns-secret-v1", L = 32)
+  // 做 XChaCha20-Poly1305 加密，附加数据为空：nonce(24) || 密文与 tag（spec/20 NODE-25）。
+  // PSK 取当前会话通过验证的那一把；重新接入的过渡期结束、或 PSK 变化后，控制面用新 PSK 重新加密下发。
+  bytes dns_provider_secret = 6;
+  OfflinePolicy offline_policy = 7;
 }
 
 message SyncFull {
-  uint64 config_version = 1;
-  KernelType kernel = 6; // 控制面为该节点选定的内核；与当前不同时 Agent 切换内核后再应用入站
-  repeated Inbound inbounds = 2;
-  repeated Credential credentials = 3;
-  bytes routes_json = 4;
-  bytes checksum = 5; // SHA-256，覆盖以上字段的规范序列化
+  reserved 1, 2, 3, 4, 6;
+  reserved "config_version", "inbounds", "credentials", "routes_json", "kernel";
+
+  bytes checksum = 5; // SHA-256(snapshot)，覆盖原始字节
+  bytes snapshot = 7; // 序列化后的 Snapshot；Agent 校验后原子替换本地快照（spec/20 NODE-15）
 }
 
+// 只能表达凭据变化；中间变更含非凭据变化时必须发 SyncFull（spec/20 NODE-15）。
 message SyncDelta {
   uint64 from_version = 1;
   uint64 to_version = 2;
   repeated Credential upserts = 3;
-  repeated string removals = 4;
+  repeated string removals = 4; // 移除即关闭连接
 }
 
 message CredUpsert {
@@ -42,58 +72,80 @@ message CredUpsert {
   repeated Credential credentials = 2;
 }
 
+// 移除一律在 1 秒内关闭该凭据的全部连接，没有“移除但不关闭”的选项（spec/20 NODE-24）。
 message CredRemove {
+  reserved 3;
+  reserved "close_sessions";
+
   uint64 config_version = 1;
   repeated string credential_ids = 2;
-  bool close_sessions = 3;
 }
 
 message QuotaLease {
   string account_id = 1;
-  int64 bytes = 2;       // 正数发放，0 表示回收全部
+  int64 bytes = 2; // 正数发放，0 表示回收全部
   string lease_id = 3;
-  int64 expires_at_ms = 4;
+  int64 expires_at_ms = 4; // 默认 10 分钟（spec/22 ACC-08）
 }
 
+// 首次申请、续租与释放（spec/22 ACC-08、ACC-10）。以 (account_id, current_lease_id, is_release) 幂等。
+// 释放必须引用该节点上最新的 lease_id；控制面结算后回复 QuotaLease{bytes = 0}。
 message LeaseRequest {
   string account_id = 1;
-  string current_lease_id = 2;
-  int64 remaining_bytes = 3;
+  string current_lease_id = 2; // 首次申请时为空
+  int64 remaining_bytes = 3; // 旧租约的剩余字节，控制面据此结算
+  // 账号在该节点的最后一条连接关闭时置为 true；控制面结算并释放，不再发放新租约。
+  // 仅在控制面声明 supports_lease_release 时发送。
+  bool is_release = 4;
 }
 
+// 该节点的全部入站，全量替换；只中断被修改或删除的入站上的连接（spec/21 AGT-07）。
 message InboundApply {
   uint64 config_version = 1;
-  KernelType kernel = 3; // 同 SyncFull.kernel
   repeated Inbound inbounds = 2;
+  KernelType kernel = 3; // 同 Snapshot.kernel
 }
 
 message RoutesApply {
   uint64 config_version = 1;
   bytes routes_json = 2;
-  bytes dns_provider_secret = 3; // 已加密
+  bytes dns_provider_secret = 3; // 加密方式同 Snapshot.dns_provider_secret
 }
 
 message AgentUpgrade {
   string version = 1;
   string url = 2;
   bytes sha256 = 3;
+  // Ed25519 签名，签名输入为 "akari-agent-upgrade-v1" | version | sha256（编码约定见 envelope.proto 文件头）。
+  // 其中 sha256 为 32 字节字节串，与其他字节串一样按 “|” 规则前置 4 字节大端长度。
+  // 签名把版本号与制品摘要绑定在一起（spec/40 DEP-09）；测试向量见 testdata/node-v1-vectors.json 的 agent_upgrade。
   bytes signature = 4;
+  uint32 key_id = 5; // Agent 内置“当前”与“下一把”两个公钥，按 key_id 选择（spec/40 DEP-09）
+}
+
+// 第三方共用凭据的全局活跃来源集合，仅发给声明 supports_source_limit 的节点（spec/22 ACC-12，M4-06）。
+message SourceSet {
+  string credential_id = 1;
+  repeated string prefixes = 2; // IPv4 为单个地址，IPv6 为 /64
+  uint64 version = 3;
 }
 
 message TrafficItem {
   string credential_id = 1;
-  uint64 raw_up = 2;
-  uint64 raw_down = 3;
+  uint64 raw_up = 2; // 客户端 → 节点的解密后代理载荷字节（spec/21 AGT-12）
+  uint64 raw_down = 3; // 节点 → 客户端
   repeated string source_prefixes = 4; // 仅第三方共用凭据：活跃来源地址前缀
 }
 
 message ReportTraffic {
+  // 同一 node_id 下严格递增，永不回退，跨重启与重装持续（spec/22 ACC-03）。
   uint64 report_seq = 1;
   int64 window_start_ms = 2;
   int64 window_end_ms = 3;
   repeated TrafficItem items = 4;
 }
 
+// 每 30 秒一次（spec/20 NODE-20）。
 message ReportStatus {
   double cpu_percent = 1;
   uint64 mem_used_bytes = 2;
@@ -102,8 +154,10 @@ message ReportStatus {
   uint64 rx_bps = 5;
   uint64 tx_bps = 6;
   uint64 uptime_seconds = 7;
-  uint64 config_version = 8;
+  uint64 config_version = 8; // 已成功应用的版本
   repeated InboundHealth inbounds = 9;
+  KernelType running_kernel = 10;
+  string kernel_error = 11; // 最近一次内核切换或入站应用失败的原因；成功后清空
 }
 
 message InboundHealth {

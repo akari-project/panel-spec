@@ -1,0 +1,10 @@
+{
+  "transport": "tcp",
+  "tls": {
+    "sni": "a.example.com",
+    "cert_mode": "acme_http"
+  },
+  "padding_scheme": [
+    "0=abc"
+  ]
+}

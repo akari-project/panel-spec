@@ -1,0 +1,10 @@
+{
+  "transport": "quic",
+  "tls": {
+    "sni": "a.example.com",
+    "cert_mode": "acme_dns"
+  },
+  "obfs": {
+    "type": "salamander"
+  }
+}

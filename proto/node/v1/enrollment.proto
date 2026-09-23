@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: Apache-2.0
+// 节点接入接口（spec/20 NODE-02、NODE-18）。
+//
+// POST https://gateway.<运营者域名>/v1/enrollments
+//   请求体：EnrollRequest 的 protobuf 编码，Content-Type: application/x-protobuf
+//   成功：200，响应体为 EnrollResponse 的 protobuf 编码
+//   失败：application/problem+json（spec/02 CONV-16）
+//     404 not_found     令牌无效、已过期或已使用（首次成功后 10 分钟内同一主机指纹重试除外）
+//     400 invalid_request  请求不完整，或能力清单无法解析
+//     429 rate_limited  附 Retry-After
+syntax = "proto3";
+
+package node.v1;
+
+message EnrollRequest {
+  string enroll_token = 1; // 一次性接入令牌（spec/20 NODE-01）
+  HostInfo host = 2;
+  bytes capabilities_raw = 3; // 序列化后的 Capabilities
+  // 主机指纹：SHA-256(机器 ID || 本地生成并持久化的 32 字节随机数) 的小写十六进制；控制面只做不透明比较。
+  // 首次成功后 10 分钟内，以同一令牌与同一指纹重复提交，返回相同结果（spec/20 NODE-02）。
+  string host_fingerprint = 4;
+}
+
+message HostInfo {
+  string hostname = 1;
+  string os = 2;
+  string arch = 3;
+  string agent_version = 4;
+  string kernel_release = 5; // uname -r
+}
+
+message EnrollResponse {
+  string node_id = 1;
+  bytes psk = 2; // 32 字节；Agent 保存为 0600 权限的文件
+  string stream_url = 3; // wss://gateway.<运营者域名>/v1/stream
+  uint32 proto_version = 4; // 控制面支持的最高协议版本
+}

@@ -1,10 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
 version: v2
 managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: github.com/ORG/panel-spec/gen/go
+      value: github.com/akari-project/panel-spec/gen/go
 plugins:
-  - remote: buf.build/protocolbuffers/go
+  # 版本由 go.mod 锁定：make tools 安装 protoc-gen-go
+  - local: protoc-gen-go
     out: gen/go
     opt: paths=source_relative

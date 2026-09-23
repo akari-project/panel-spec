@@ -1,0 +1,17 @@
+{
+  "transport": "xhttp",
+  "security": "tls",
+  "tls": {
+    "sni": "edge-hk-1.example.com",
+    "alpn": [
+      "h2",
+      "http/1.1"
+    ],
+    "min_version": "1.2",
+    "cert_mode": "acme_http"
+  },
+  "xhttp": {
+    "path": "/tjx",
+    "mode": "stream-one"
+  }
+}

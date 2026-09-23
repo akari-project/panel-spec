@@ -1,0 +1,7 @@
+{
+  "transport": "tcp",
+  "tls": {
+    "sni": "not a host!",
+    "cert_mode": "acme_http"
+  }
+}

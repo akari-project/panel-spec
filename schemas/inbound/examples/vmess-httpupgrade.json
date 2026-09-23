@@ -1,0 +1,8 @@
+{
+  "transport": "httpupgrade",
+  "security": "none",
+  "httpupgrade": {
+    "path": "/vm-up",
+    "host": "cdn.example.com"
+  }
+}

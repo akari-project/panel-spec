@@ -1,0 +1,6 @@
+{
+  "transport": "mkcp",
+  "mkcp": {
+    "mtu": 9000
+  }
+}
