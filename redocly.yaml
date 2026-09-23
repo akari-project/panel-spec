@@ -1,0 +1,5 @@
+extends:
+  - recommended
+rules:
+  # 所有操作都有 default: Problem 响应覆盖 4xx，不再逐个声明
+  operation-4xx-response: off

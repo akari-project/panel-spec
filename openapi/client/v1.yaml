@@ -1,0 +1,1499 @@
+# SPDX-License-Identifier: Apache-2.0
+openapi: 3.1.0
+info:
+  title: Client API
+  version: 1.0.0-draft
+  description: '面向自研客户端与用户中心的接口。命名约定见 spec/30 与 spec/02。
+
+    所有产生副作用的 POST 接受 Idempotency-Key 请求头。
+
+    '
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+- url: https://api.example.invalid
+security:
+- bearer: []
+tags:
+- name: config
+  description: 客户端启动配置与版本
+- name: auth
+  description: 注册、登录、令牌与设备授权
+- name: account
+  description: 当前账号
+- name: devices
+  description: 已注册设备
+- name: connectivity
+  description: 连接配置、地区与事件流
+- name: commerce
+  description: 套餐、报价、订单、权益与余额
+- name: content
+  description: 公告与帮助文档
+- name: support
+  description: 工单
+paths:
+  /v1/config:
+    get:
+      tags:
+      - config
+      operationId: getConfig
+      summary: 客户端启动配置（已签名）
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignedConfig'
+        default:
+          $ref: '#/components/responses/Problem'
+  /v1/releases/latest:
+    get:
+      tags:
+      - config
+      operationId: getLatestRelease
+      security: []
+      parameters:
+      - name: platform
+        in: query
+        required: true
+        schema:
+          $ref: '#/components/schemas/Platform'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Release'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Get latest release
+  /v1/accounts:
+    post:
+      tags:
+      - auth
+      operationId: createAccount
+      summary: 注册
+      security: []
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - email
+              - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                invite_code:
+                  type: string
+                locale:
+                  type: string
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        default:
+          $ref: '#/components/responses/Problem'
+  /v1/accounts/verification:
+    post:
+      tags:
+      - auth
+      operationId: verifyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - code
+              properties:
+                code:
+                  type: string
+                  pattern: ^[0-9]{6}$
+      responses:
+        '204':
+          description: Verified
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Verify email
+  /v1/sessions:
+    post:
+      tags:
+      - auth
+      operationId: createSession
+      summary: 登录并注册设备
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - email
+              - password
+              - device
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                totp_code:
+                  type: string
+                challenge_id:
+                  type: string
+                device:
+                  $ref: '#/components/schemas/DeviceInfo'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        default:
+          $ref: '#/components/responses/Problem'
+  /v1/sessions/current:
+    delete:
+      tags:
+      - auth
+      operationId: deleteCurrentSession
+      summary: 登出并撤销本设备凭据
+      responses:
+        '204':
+          description: Deleted
+        default:
+          $ref: '#/components/responses/Problem'
+  /v1/oauth/token:
+    post:
+      tags:
+      - auth
+      operationId: issueToken
+      summary: 刷新令牌轮换与设备授权轮询（RFC 6749 / RFC 8628）
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+              - grant_type
+              properties:
+                grant_type:
+                  type: string
+                  enum:
+                  - refresh_token
+                  - urn:ietf:params:oauth:grant-type:device_code
+                refresh_token:
+                  type: string
+                device_code:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          description: OAuth error (authorization_pending, slow_down, expired_token, invalid_grant)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+  /v1/oauth/device_authorization:
+    post:
+      tags:
+      - auth
+      operationId: startDeviceAuthorization
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                device_platform:
+                  type: string
+                device_model:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - device_code
+                - user_code
+                - verification_uri
+                - expires_in
+                - interval
+                properties:
+                  device_code:
+                    type: string
+                  user_code:
+                    type: string
+                  verification_uri:
+                    type: string
+                    format: uri
+                  expires_in:
+                    type: integer
+                  interval:
+                    type: integer
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Start device authorization
+  /v1/device-links:
+    post:
+      tags:
+      - auth
+      operationId: createDeviceLink
+      summary: 新设备生成扫码登录请求
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - device
+              properties:
+                device:
+                  $ref: '#/components/schemas/DeviceInfo'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  qr_payload:
+                    type: string
+                  poll_token:
+                    type: string
+                  expires_in_seconds:
+                    type: integer
+        default:
+          $ref: '#/components/responses/Problem'
+  /v1/device-links/{id}/approve:
+    post:
+      tags:
+      - auth
+      operationId: approveDeviceLink
+      summary: 已登录设备批准扫码登录
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Approved
+        default:
+          $ref: '#/components/responses/Problem'
+  /v1/password-resets:
+    post:
+      tags:
+      - auth
+      operationId: requestPasswordReset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - email
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '202':
+          description: Accepted（无论邮箱是否存在）
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Request password reset
+  /v1/me:
+    get:
+      tags:
+      - account
+      operationId: getMe
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Get me
+    delete:
+      tags:
+      - account
+      operationId: requestAccountDeletion
+      responses:
+        '202':
+          description: 注销申请已受理
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Request account deletion
+  /v1/me/usage:
+    get:
+      tags:
+      - account
+      operationId: getUsage
+      parameters:
+      - name: days
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 30
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usage'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Get usage
+  /v1/me/devices:
+    get:
+      tags:
+      - devices
+      operationId: listDevices
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Device'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: List devices
+  /v1/me/devices/{id}:
+    delete:
+      tags:
+      - devices
+      operationId: removeDevice
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Removed
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Remove device
+  /v1/me/configuration:
+    get:
+      tags:
+      - connectivity
+      operationId: getMyConfiguration
+      summary: 本设备的结构化连接配置
+      parameters:
+      - name: If-None-Match
+        in: header
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Configuration'
+        '304':
+          description: Not Modified
+        default:
+          $ref: '#/components/responses/Problem'
+  /v1/me/events:
+    get:
+      tags:
+      - connectivity
+      operationId: streamEvents
+      summary: Server-Sent Events
+      responses:
+        '200':
+          description: text/event-stream；每条事件的 event 字段取值见 EventType
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/EventType'
+        default:
+          $ref: '#/components/responses/Problem'
+  /v1/configurations/{token}:
+    get:
+      tags:
+      - connectivity
+      operationId: exportConfiguration
+      summary: 第三方客户端配置导出
+      security: []
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum:
+          - auto
+          - singbox
+          - mihomo
+          - base64
+      responses:
+        '200':
+          description: 客户端格式的配置文本，带 Subscription-Userinfo 与 Profile-Update-Interval
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: Not Found
+  /v1/locations:
+    get:
+      tags:
+      - connectivity
+      operationId: listLocations
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Location'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: List locations
+  /v1/assets/{digest}:
+    get:
+      tags:
+      - connectivity
+      operationId: getAsset
+      security: []
+      parameters:
+      - name: digest
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+      responses:
+        '200':
+          description: 按内容寻址的公共资源
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                contentMediaType: application/octet-stream
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Get asset
+  /v1/plans:
+    get:
+      tags:
+      - commerce
+      operationId: listPlans
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Plan'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: List plans
+  /v1/quotes:
+    post:
+      tags:
+      - commerce
+      operationId: createQuote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - price_id
+              properties:
+                price_id:
+                  type: string
+                  format: uuid
+                mode:
+                  type: string
+                  enum:
+                  - auto
+                  - downgrade_immediate
+                  default: auto
+                coupon_code:
+                  type: string
+                use_credit:
+                  type: boolean
+                  default: true
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quote'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Create quote
+  /v1/orders:
+    get:
+      tags:
+      - commerce
+      operationId: listOrders
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: List orders
+    post:
+      tags:
+      - commerce
+      operationId: createOrder
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - quote_id
+              properties:
+                quote_id:
+                  type: string
+                  format: uuid
+                payment_method:
+                  type: string
+                  enum:
+                  - alipay_f2f
+                  - credit
+                  - test
+                  default: alipay_f2f
+                  description: 应付为 0 时忽略，直接用余额开通
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              examples:
+                alipay:
+                  value:
+                    id: 0192f0c4-0000-7000-8000-000000000001
+                    number: ORD-20261001-K7Q2XM
+                    type: new
+                    status: pending
+                    amount_due_minor: 3000
+                    currency: CNY
+                    payment:
+                      method: alipay_qr
+                      qr_content: https://qr.alipay.com/example
+                      expires_at: '2026-10-01T10:30:00+08:00'
+                    created_at: '2026-10-01T10:00:00+08:00'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Create order
+  /v1/orders/{id}:
+    get:
+      tags:
+      - commerce
+      operationId: getOrder
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Get order
+  /v1/orders/{id}/cancel:
+    post:
+      tags:
+      - commerce
+      operationId: cancelOrder
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Cancelled
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Cancel order
+  /v1/me/entitlements:
+    get:
+      tags:
+      - commerce
+      operationId: getEntitlements
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current:
+                    oneOf:
+                    - $ref: '#/components/schemas/Entitlement'
+                    - type: 'null'
+                  next:
+                    oneOf:
+                    - $ref: '#/components/schemas/Entitlement'
+                    - type: 'null'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Get entitlements
+  /v1/me/entitlements/current:
+    patch:
+      tags:
+      - commerce
+      operationId: updateCurrentEntitlement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_auto_renew:
+                  type: boolean
+      responses:
+        '204':
+          description: Updated
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Update current entitlement
+  /v1/me/entitlements/next:
+    delete:
+      tags:
+      - commerce
+      operationId: cancelScheduledSegment
+      responses:
+        '204':
+          description: 已取消，金额退回余额
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Cancel scheduled segment
+  /v1/me/credits:
+    get:
+      tags:
+      - commerce
+      operationId: getCredits
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balance_minor:
+                    type: integer
+                    format: int64
+                  currency:
+                    type: string
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CreditEntry'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Get credits
+  /v1/me/redemptions:
+    post:
+      tags:
+      - commerce
+      operationId: redeemCode
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - code
+              properties:
+                code:
+                  type: string
+      responses:
+        '204':
+          description: Redeemed
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Redeem code
+  /v1/announcements:
+    get:
+      tags:
+      - content
+      operationId: listAnnouncements
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Announcement'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: List announcements
+  /v1/articles:
+    get:
+      tags:
+      - content
+      operationId: listArticles
+      security: []
+      parameters:
+      - name: platform
+        in: query
+        schema:
+          $ref: '#/components/schemas/Platform'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ArticleSummary'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: List articles
+  /v1/support/tickets:
+    get:
+      tags:
+      - support
+      operationId: listTickets
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Ticket'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: List tickets
+    post:
+      tags:
+      - support
+      operationId: createTicket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - subject
+              - category
+              - body
+              properties:
+                subject:
+                  type: string
+                  maxLength: 200
+                category:
+                  type: string
+                body:
+                  type: string
+                  maxLength: 10000
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+        default:
+          $ref: '#/components/responses/Problem'
+      summary: Create ticket
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: PASETO v4.public
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+  responses:
+    Problem:
+      description: RFC 9457 problem details
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      required:
+      - type
+      - title
+      - status
+      - code
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: string
+        detail:
+          type: string
+        request_id:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              code:
+                type: string
+    Platform:
+      type: string
+      enum:
+      - ios
+      - android
+      - windows
+      - macos
+      - linux
+      - web
+      - other
+    DeviceInfo:
+      type: object
+      required:
+      - platform
+      properties:
+        platform:
+          $ref: '#/components/schemas/Platform'
+        model:
+          type: string
+        app_version:
+          type: string
+        public_key:
+          type: string
+          contentEncoding: base64
+    TokenPair:
+      type: object
+      required:
+      - access_token
+      - refresh_token
+      - expires_in
+      - token_type
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+        token_type:
+          type: string
+          const: Bearer
+        device_id:
+          type: string
+          format: uuid
+    SignedConfig:
+      type: object
+      required:
+      - payload
+      - signature
+      - key_id
+      properties:
+        payload:
+          type: object
+          properties:
+            min_version:
+              type: object
+              additionalProperties:
+                type: string
+            api_endpoints:
+              type: array
+              items:
+                type: string
+                format: uri
+            features:
+              type: object
+              additionalProperties:
+                type: boolean
+            announcement_version:
+              type: integer
+            issued_at:
+              type: string
+              format: date-time
+        signature:
+          type: string
+          contentEncoding: base64
+        key_id:
+          type: string
+    Release:
+      type: object
+      properties:
+        version:
+          type: string
+        url:
+          type: string
+          format: uri
+        sha256:
+          type: string
+        signature:
+          type: string
+        notes:
+          type: string
+        is_mandatory:
+          type: boolean
+    Me:
+      type: object
+      required:
+      - id
+      - email
+      - is_email_verified
+      - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        is_email_verified:
+          type: boolean
+        status:
+          type: string
+          enum:
+          - active
+          - suspended
+          - deleting
+        locale:
+          type: string
+        entitlement:
+          oneOf:
+          - $ref: '#/components/schemas/Entitlement'
+          - type: 'null'
+        device_limit:
+          type: integer
+        referral_code:
+          type: string
+    Usage:
+      type: object
+      properties:
+        bytes_used:
+          type: integer
+          format: int64
+        bytes_limit:
+          type: integer
+          format: int64
+        cycle_start:
+          type: string
+          format: date-time
+        cycle_end:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        daily:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              bytes_up:
+                type: integer
+                format: int64
+              bytes_down:
+                type: integer
+                format: int64
+    Device:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        platform:
+          $ref: '#/components/schemas/Platform'
+        model:
+          type: string
+        app_version:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        is_current:
+          type: boolean
+    Location:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        region_code:
+          type: string
+        load_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        is_available:
+          type: boolean
+        traffic_multiplier:
+          type: string
+          description: 十进制字符串，例如 1.50
+    Endpoint:
+      type: object
+      required:
+      - location_id
+      - protocol
+      - host
+      - port
+      properties:
+        location_id:
+          type: string
+          format: uuid
+        protocol:
+          type: string
+          enum:
+          - vless
+          - vmess
+          - trojan
+          - shadowsocks
+          - hysteria2
+          - tuic
+          - anytls
+        host:
+          type: string
+        port:
+          type: integer
+        transport:
+          type: object
+          additionalProperties: true
+        tls:
+          type: object
+          additionalProperties: true
+    Configuration:
+      type: object
+      required:
+      - version
+      - endpoints
+      properties:
+        version:
+          type: integer
+          format: int64
+        credential:
+          type: string
+          description: 本设备代理凭据
+        endpoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/Endpoint'
+        rule_assets:
+          type: array
+          items:
+            type: string
+            description: 资源摘要
+        entitlement_status:
+          type: string
+          enum:
+          - none
+          - active
+          - over_quota
+          - suspended
+    PlanPrice:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        period:
+          type: string
+          enum:
+          - month
+          - quarter
+          - half_year
+          - year
+          - one_time
+        amount_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+    Plan:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        tier:
+          type: integer
+        bytes_per_cycle:
+          type: integer
+          format: int64
+        device_limit:
+          type: integer
+        speed_limit_mbps:
+          type:
+          - integer
+          - 'null'
+        reset_policy:
+          type: string
+          enum:
+          - purchase_anchor
+          - calendar_month
+          - never
+        location_count:
+          type: integer
+        prices:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanPrice'
+    Quote:
+      type: object
+      required:
+      - id
+      - order_type
+      - amount_due_minor
+      - currency
+      - expires_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_type:
+          type: string
+          enum:
+          - new
+          - renew
+          - upgrade
+          - downgrade_scheduled
+          - downgrade_immediate
+        list_price_minor:
+          type: integer
+          format: int64
+        remaining_value_minor:
+          type: integer
+          format: int64
+        discount_minor:
+          type: integer
+          format: int64
+        credit_applied_minor:
+          type: integer
+          format: int64
+        amount_due_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        starts_at:
+          type: string
+          format: date-time
+        expires_at_after:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: 开通后的到期时间
+        expires_at:
+          type: string
+          format: date-time
+          description: 报价有效期
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+          enum:
+          - pending
+          - paid
+          - fulfilled
+          - credited
+          - cancelled
+          - expired
+          - refunded
+        amount_due_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        payment:
+          oneOf:
+          - $ref: '#/components/schemas/PaymentInstruction'
+          - type: 'null'
+          description: 待支付订单的支付指引；应付为 0 或已支付时为 null
+    Entitlement:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        plan_id:
+          type: string
+          format: uuid
+        plan_name:
+          type: string
+        status:
+          type: string
+          enum:
+          - scheduled
+          - active
+          - over_quota
+          - suspended
+        starts_at:
+          type: string
+          format: date-time
+        expires_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        bytes_limit:
+          type: integer
+          format: int64
+        bytes_used:
+          type: integer
+          format: int64
+        device_limit:
+          type: integer
+        locked_price:
+          $ref: '#/components/schemas/PlanPrice'
+        is_auto_renew:
+          type: boolean
+    CreditEntry:
+      type: object
+      properties:
+        amount_minor:
+          type: integer
+          format: int64
+        reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    Announcement:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        body_md:
+          type: string
+        is_pinned:
+          type: boolean
+        starts_at:
+          type: string
+          format: date-time
+    ArticleSummary:
+      type: object
+      properties:
+        slug:
+          type: string
+        title:
+          type: string
+        category:
+          type: string
+        platforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/Platform'
+    Ticket:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        subject:
+          type: string
+        status:
+          type: string
+          enum:
+          - open
+          - in_progress
+          - waiting_user
+          - closed
+        updated_at:
+          type: string
+          format: date-time
+    EventType:
+      type: string
+      enum:
+      - quota_warning
+      - plan_changed
+      - profile_updated
+      - device_revoked
+      - session_revoked
+      - announcement
+    PaymentInstruction:
+      type: object
+      required:
+      - method
+      - expires_at
+      properties:
+        method:
+          type: string
+          enum:
+          - alipay_qr
+          - test_checkout
+        qr_content:
+          type: string
+          description: 支付宝二维码内容；前端渲染为二维码，移动端可直接作为“打开支付宝”的链接
+        test_checkout_url:
+          type: string
+          format: uri
+          description: 仅测试渠道
+        expires_at:
+          type: string
+          format: date-time

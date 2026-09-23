@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: Apache-2.0
+syntax = "proto3";
+
+package node.v1;
+
+enum SyncMode {
+  SYNC_MODE_UNSPECIFIED = 0;
+  SYNC_MODE_DELTA = 1;
+  SYNC_MODE_FULL = 2;
+}
+
+enum KernelType {
+  KERNEL_TYPE_UNSPECIFIED = 0;
+  KERNEL_TYPE_SINGBOX = 1;
+  KERNEL_TYPE_XRAY = 2;
+}
+
+enum DeployMode {
+  DEPLOY_MODE_UNSPECIFIED = 0;
+  DEPLOY_MODE_NODE = 1;
+  DEPLOY_MODE_MACHINE = 2;
+}
+
+enum Protocol {
+  PROTOCOL_UNSPECIFIED = 0;
+  PROTOCOL_VLESS = 1;
+  PROTOCOL_VMESS = 2;
+  PROTOCOL_TROJAN = 3;
+  PROTOCOL_SHADOWSOCKS = 4;
+  PROTOCOL_HYSTERIA2 = 5;
+  PROTOCOL_TUIC = 6;
+  PROTOCOL_ANYTLS = 7;
+}
