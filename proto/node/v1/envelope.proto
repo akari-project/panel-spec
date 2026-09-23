@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // 控制面与 node-agent 之间的传输信封。语义见 spec/20-node-protocol.md。
+//
+// 编码约定（适用于本文件中所有 MAC、密钥派生与附加数据）：
+//   - 整数为大端定长（字段后括号内为字节数）；
+//   - 字符串与字节串前置 4 字节大端长度；
+//   - “|” 表示按顺序拼接；
+//   - 需要覆盖嵌套消息时，一律对“收到的原始字节”取 SHA-256，接收方不重新序列化（spec/20 20.3）。
+// 测试向量见 testdata/node-v1-vectors.json，由 tools/vectors 生成。
 syntax = "proto3";
 
 package node.v1;
@@ -7,65 +14,103 @@ package node.v1;
 import "node/v1/common.proto";
 import "node/v1/messages.proto";
 
-// 所有帧（WSS 二进制帧或长轮询请求体中的一项）都是一个 Frame。
-// 握手完成前只允许 Hello；之后 payload 为会话密钥加密的 Envelope。
+// 所有帧（WSS 二进制帧，或长轮询请求体中的一项）都是一个 Frame。
+// 握手完成前只允许 hello、hello_ack、hello_reject；之后只允许 sealed。
 message Frame {
   oneof kind {
     Hello hello = 1;
     HelloAck hello_ack = 2;
-    // XChaCha20-Poly1305 密文，明文为序列化后的 Envelope。
-    // 附加数据为 direction(1 字节) || seq(8 字节大端)。
+    // sealed = nonce(24，每帧由 CSPRNG 新生成) || XChaCha20-Poly1305 密文与 tag。
+    // 明文为序列化后的 Envelope。
+    // 附加数据 = direction(1) || seq(8)，direction：Agent → 控制面为 0x01，控制面 → Agent 为 0x02。
+    // 密钥：K = HKDF-SHA256(ikm = X25519(本方临时私钥, 对方临时公钥), salt = Hello.nonce,
+    //   info = "akari-node-session-v1" | node_id(16，UUID 的二进制形式) | Hello.ephemeral_pubkey(32) | HelloAck.ephemeral_pubkey(32),
+    //   L = 64)。K[0:32] 用于 Agent → 控制面，K[32:64] 用于控制面 → Agent。
+    // nonce 不得由 seq 派生（spec/20 NODE-11）。
     bytes sealed = 3;
+    HelloReject hello_reject = 5;
   }
+  // 会话内每个方向从 1 开始递增；重复或不递增即关闭连接（spec/20 NODE-12）。
   uint64 seq = 4;
 }
 
 message Hello {
-  string node_id = 1;
+  reserved 6;
+  reserved "capabilities";
+
+  string node_id = 1; // UUID 文本形式
   int64 ts_ms = 2;
   bytes nonce = 3; // 16 字节随机数
   uint32 proto_version = 4;
-  bytes ephemeral_pubkey = 5; // X25519
-  Capabilities capabilities = 6;
+  bytes ephemeral_pubkey = 5; // X25519，32 字节
+  // 已应用的配置版本；置为 0 表示请求全量同步（spec/20 NODE-23）。
   uint64 config_version = 7;
-  // HMAC-SHA256(PSK, M)，M 为以下字段依次拼接（整数为大端定长，字符串与字节串前置 4 字节大端长度）：
-  //   "node-hello-v1" | node_id | ts_ms(8) | nonce | proto_version(4) | ephemeral_pubkey
-  //   | SHA-256(capabilities 的确定性序列化) | config_version(8)
+  // HMAC-SHA256(PSK, M)，M 为以下字段依次拼接：
+  //   "akari-node-hello-v1" | node_id | ts_ms(8) | nonce | proto_version(4) | ephemeral_pubkey
+  //   | SHA-256(capabilities_raw) | config_version(8)
   bytes mac = 8;
+  // 序列化后的 Capabilities。MAC 覆盖这段原始字节，接收方按原始字节校验后再解析。
+  bytes capabilities_raw = 9;
 }
 
 message HelloAck {
-  bytes ephemeral_pubkey = 1;
-  uint32 proto_version = 2;
-  // HMAC-SHA256(PSK, "node-hello-ack-v1" | node_id | agent_pubkey | ephemeral_pubkey | proto_version(4) | sync_mode(4))
+  bytes ephemeral_pubkey = 1; // X25519，32 字节
+  uint32 proto_version = 2; // 控制面选定的协议版本
+  // HMAC-SHA256(PSK, M)，PSK 为验证通过 Hello 的那一个（spec/20 NODE-10），M 为：
+  //   "akari-node-hello-ack-v1" | node_id | Hello.ephemeral_pubkey | ephemeral_pubkey | proto_version(4)
+  //   | sync_mode(4) | SHA-256(server_capabilities_raw) | last_report_seq(8)
   bytes mac = 3;
   SyncMode sync_mode = 4;
+  // 序列化后的 ControlPlaneCapabilities（spec/20 NODE-16）。
+  bytes server_capabilities_raw = 5;
+  // 控制面已入账的该节点最大 report_seq；Agent 之后的 report_seq 必须大于它（spec/22 ACC-03）。
+  uint64 last_report_seq = 6;
+}
+
+// 握手失败时发送，随后关闭连接（spec/20 NODE-22）。
+// 本消息不带 MAC：握手尚未认证，完整性依赖 TLS。
+message HelloReject {
+  HelloRejectReason reason = 1;
+  uint32 retry_after_ms = 2; // 仅 BUSY 有意义
+  string detail = 3; // 供日志与 agentctl doctor 显示，不含敏感信息
 }
 
 message Capabilities {
   string agent_version = 1;
   KernelType kernel = 2; // 当前运行中的内核
   string kernel_version = 3; // 当前内核版本
-  repeated Protocol protocols = 4; // 当前内核支持的协议（兼容字段，以 kernels 为准）
+  repeated Protocol protocols = 4; // 兼容字段，以 kernels 为准
   DeployMode deploy_mode = 5;
   bool supports_quota_lease = 6;
   bool supports_speed_limit = 7;
   bool supports_routes = 8;
-  // 本二进制内置的全部内核及各自支持的协议。控制面据此校验入站配置。
+  // 本二进制内置的全部内核及各自支持的协议与传输。控制面据此校验入站配置（spec/21 AGT-09）。
   repeated KernelSupport kernels = 9;
+  // 支持共用凭据的来源数限制与 SourceSet（spec/22 ACC-12，M4-06）。
+  bool supports_source_limit = 10;
 }
 
 message KernelSupport {
   KernelType kernel = 1;
   string version = 2;
   repeated Protocol stable_protocols = 3;
-  repeated Protocol experimental_protocols = 4; // 需控制面显式允许才下发
+  repeated Protocol experimental_protocols = 4; // 需要节点 allow_experimental 才下发
+  repeated Transport stable_transports = 5;
+  repeated Transport experimental_transports = 6;
+}
+
+// 控制面能力位。Agent 只向声明了对应能力的控制面发送新增的上报消息（spec/20 NODE-16）。
+message ControlPlaneCapabilities {
+  string panel_version = 1;
+  bool supports_lease_release = 2; // 接受 LeaseRequest.is_release
+  bool supports_source_set = 3; // 会下发 SourceSet
 }
 
 // 会话内的业务信封（加密后放入 Frame.sealed）。
 message Envelope {
-  uint64 ack = 1; // 已收到对端的最大连续 seq
+  uint64 ack = 1; // 已收到对端的最大连续 seq；只表示“已收到”，不表示“已应用”
   int64 ts_ms = 2;
+  // 发送方生成的 UUIDv7；重传时保持原值；接收方至少保留 24 小时去重记录（spec/20 NODE-13）。
   string idem_key = 3;
   oneof body {
     SyncFull sync_full = 10;
@@ -76,6 +121,7 @@ message Envelope {
     InboundApply inbound_apply = 15;
     RoutesApply routes_apply = 16;
     AgentUpgrade agent_upgrade = 17;
+    SourceSet source_set = 18;
     ReportTraffic report_traffic = 30;
     ReportStatus report_status = 31;
     LeaseRequest lease_request = 32;

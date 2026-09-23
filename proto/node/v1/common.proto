@@ -18,6 +18,7 @@ enum KernelType {
 enum DeployMode {
   DEPLOY_MODE_UNSPECIFIED = 0;
   DEPLOY_MODE_NODE = 1;
+  // 机器模式属于 M5-03；1.0 之前每个节点各建一条连接（spec/21 21.1）。
   DEPLOY_MODE_MACHINE = 2;
 }
 
@@ -30,4 +31,28 @@ enum Protocol {
   PROTOCOL_HYSTERIA2 = 5;
   PROTOCOL_TUIC = 6;
   PROTOCOL_ANYTLS = 7;
+}
+
+// 入站传输（spec/21 传输矩阵）。基线由数据库 kernel_transports 强制。
+enum Transport {
+  TRANSPORT_UNSPECIFIED = 0;
+  TRANSPORT_TCP = 1; // 含 TLS 与 Reality
+  TRANSPORT_WS = 2;
+  TRANSPORT_GRPC = 3;
+  TRANSPORT_HTTPUPGRADE = 4;
+  TRANSPORT_XHTTP = 5; // 仅 Xray
+  TRANSPORT_MKCP = 6; // 仅 Xray
+  TRANSPORT_QUIC = 7; // Hysteria2、TUIC 等基于 QUIC 的协议自带
+}
+
+// 握手拒绝原因（spec/20 NODE-22）。WebSocket 关闭码 = 4000 + 枚举值。
+enum HelloRejectReason {
+  HELLO_REJECT_REASON_UNSPECIFIED = 0;
+  HELLO_REJECT_REASON_CLOCK_SKEW = 1; // 关闭码 4001
+  HELLO_REJECT_REASON_AUTH_FAILED = 2; // 4002
+  HELLO_REJECT_REASON_REPLAY = 3; // 4003
+  HELLO_REJECT_REASON_VERSION_UNSUPPORTED = 4; // 4004
+  HELLO_REJECT_REASON_BUSY = 5; // 4005
+  HELLO_REJECT_REASON_REVOKED = 6; // 4006
+  HELLO_REJECT_REASON_SUPERSEDED = 7; // 4007
 }
