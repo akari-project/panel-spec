@@ -1,0 +1,15 @@
+{
+  "transport": "tcp",
+  "security": "reality",
+  "reality": {
+    "private_key": "short",
+    "short_ids": [
+      ""
+    ],
+    "handshake_address": "www.example.org",
+    "handshake_port": 443,
+    "sni_names": [
+      "www.example.org"
+    ]
+  }
+}

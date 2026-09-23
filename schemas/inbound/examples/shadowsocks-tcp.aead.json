@@ -1,0 +1,4 @@
+{
+  "transport": "tcp",
+  "method": "chacha20-ietf-poly1305"
+}

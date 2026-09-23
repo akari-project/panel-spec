@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "tls": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "certificate_path"
+                  ]
+                },
+                {
+                  "required": [
+                    "key_path"
+                  ]
+                }
+              ]
+            }
+          },
+          "if": {
+            "properties": {
+              "cert_mode": {
+                "const": "file"
+              }
+            },
+            "required": [
+              "cert_mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "certificate_path",
+              "key_path"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "alpn": {
+          "description": "ALPN。基于 QUIC 的协议只使用 h3，默认 [\"h3\"]。",
+          "items": {
+            "enum": [
+              "h3"
+            ]
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "cert_mode": {
+          "description": "证书来源：acme_http 为 HTTP-01，acme_dns 为 DNS-01（服务商凭据随 RoutesApply 加密下发，spec/20 NODE-25），file 为节点本地文件。",
+          "enum": [
+            "acme_http",
+            "acme_dns",
+            "file"
+          ]
+        },
+        "certificate_path": {
+          "description": "cert_mode 为 file 时必填：证书链 PEM 的绝对路径。",
+          "maxLength": 1024,
+          "pattern": "^/",
+          "type": "string"
+        },
+        "key_path": {
+          "description": "cert_mode 为 file 时必填：私钥 PEM 的绝对路径。",
+          "maxLength": 1024,
+          "pattern": "^/",
+          "type": "string"
+        },
+        "min_version": {
+          "description": "最低 TLS 版本，默认 1.2。",
+          "enum": [
+            "1.2",
+            "1.3"
+          ]
+        },
+        "sni": {
+          "description": "证书域名，同时是客户端使用的 SNI。",
+          "format": "hostname",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "sni",
+        "cert_mode"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:akari-project:panel-spec:schemas:inbound:tuic-quic",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Inbound.settings_json：protocol=tuic，transport=quic（spec/21 AGT-13）。用户凭据不在此处，由 Credential 下发。",
+  "properties": {
+    "auth_timeout_ms": {
+      "description": "建立 QUIC 连接后等待客户端认证的时间，默认 3000。",
+      "maximum": 60000,
+      "minimum": 100,
+      "type": "integer"
+    },
+    "congestion_control": {
+      "description": "QUIC 拥塞控制算法，默认 cubic。",
+      "enum": [
+        "cubic",
+        "new_reno",
+        "bbr"
+      ]
+    },
+    "heartbeat_ms": {
+      "description": "心跳间隔，默认 10000。",
+      "maximum": 60000,
+      "minimum": 1000,
+      "type": "integer"
+    },
+    "is_zero_rtt_enabled": {
+      "description": "启用 0-RTT。有重放风险，默认 false。",
+      "type": "boolean"
+    },
+    "tls": {
+      "$ref": "#/$defs/tls"
+    },
+    "transport": {
+      "const": "quic",
+      "description": "必填，等于本组合的传输，与 Inbound.transport 一致。数据库校验以 settings->>'transport' 为准。"
+    }
+  },
+  "required": [
+    "transport",
+    "tls"
+  ],
+  "title": "TUIC v5",
+  "type": "object",
+  "x-kernels": {
+    "singbox": "stable",
+    "xray": "unsupported"
+  }
+}

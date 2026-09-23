@@ -1,0 +1,7 @@
+{
+  "transport": "grpc",
+  "security": "none",
+  "grpc": {
+    "service_name": "tj"
+  }
+}

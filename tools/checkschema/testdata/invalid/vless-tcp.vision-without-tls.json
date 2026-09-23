@@ -1,0 +1,5 @@
+{
+  "transport": "tcp",
+  "security": "none",
+  "flow": "xtls-rprx-vision"
+}

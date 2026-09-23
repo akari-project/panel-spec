@@ -1,0 +1,9 @@
+{
+  "transport": "tcp",
+  "tls": {
+    "sni": "edge-hk-1.example.com",
+    "cert_mode": "file",
+    "certificate_path": "/etc/akari/certs/fullchain.pem",
+    "key_path": "/etc/akari/certs/privkey.pem"
+  }
+}

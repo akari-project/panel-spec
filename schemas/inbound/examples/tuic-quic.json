@@ -1,0 +1,14 @@
+{
+  "transport": "quic",
+  "tls": {
+    "sni": "edge-hk-1.example.com",
+    "alpn": [
+      "h3"
+    ],
+    "cert_mode": "acme_dns"
+  },
+  "congestion_control": "bbr",
+  "auth_timeout_ms": 3000,
+  "heartbeat_ms": 10000,
+  "is_zero_rtt_enabled": false
+}

@@ -1,0 +1,7 @@
+{
+  "transport": "ws",
+  "security": "tls",
+  "ws": {
+    "path": "/ws"
+  }
+}

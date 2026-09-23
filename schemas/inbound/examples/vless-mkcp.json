@@ -1,0 +1,14 @@
+{
+  "transport": "mkcp",
+  "mkcp": {
+    "mtu": 1350,
+    "tti_ms": 50,
+    "uplink_capacity_mbps": 5,
+    "downlink_capacity_mbps": 20,
+    "is_congestion_enabled": false,
+    "read_buffer_mb": 2,
+    "write_buffer_mb": 2,
+    "header_type": "wechat-video",
+    "seed": "k7q2xm-seed"
+  }
+}

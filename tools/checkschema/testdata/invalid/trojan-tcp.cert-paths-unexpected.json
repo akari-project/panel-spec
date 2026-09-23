@@ -1,0 +1,8 @@
+{
+  "transport": "tcp",
+  "tls": {
+    "sni": "a.example.com",
+    "cert_mode": "acme_http",
+    "key_path": "/k.pem"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "transport": "ws",
+  "security": "none",
+  "tls": {
+    "sni": "a.example.com",
+    "cert_mode": "acme_http"
+  },
+  "ws": {
+    "path": "/ws"
+  }
+}

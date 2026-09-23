@@ -1,0 +1,17 @@
+{
+  "transport": "quic",
+  "tls": {
+    "sni": "edge-hk-1.example.com",
+    "alpn": [
+      "h3"
+    ],
+    "cert_mode": "acme_dns"
+  },
+  "up_mbps": 1000,
+  "down_mbps": 1000,
+  "obfs": {
+    "type": "salamander",
+    "key": "k7q2xm-obfs-key"
+  },
+  "masquerade_url": "https://www.example.org/"
+}

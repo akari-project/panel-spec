@@ -1,0 +1,161 @@
+{
+  "$defs": {
+    "tls": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "certificate_path"
+                  ]
+                },
+                {
+                  "required": [
+                    "key_path"
+                  ]
+                }
+              ]
+            }
+          },
+          "if": {
+            "properties": {
+              "cert_mode": {
+                "const": "file"
+              }
+            },
+            "required": [
+              "cert_mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "certificate_path",
+              "key_path"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "alpn": {
+          "description": "ALPN。基于 QUIC 的协议只使用 h3，默认 [\"h3\"]。",
+          "items": {
+            "enum": [
+              "h3"
+            ]
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "cert_mode": {
+          "description": "证书来源：acme_http 为 HTTP-01，acme_dns 为 DNS-01（服务商凭据随 RoutesApply 加密下发，spec/20 NODE-25），file 为节点本地文件。",
+          "enum": [
+            "acme_http",
+            "acme_dns",
+            "file"
+          ]
+        },
+        "certificate_path": {
+          "description": "cert_mode 为 file 时必填：证书链 PEM 的绝对路径。",
+          "maxLength": 1024,
+          "pattern": "^/",
+          "type": "string"
+        },
+        "key_path": {
+          "description": "cert_mode 为 file 时必填：私钥 PEM 的绝对路径。",
+          "maxLength": 1024,
+          "pattern": "^/",
+          "type": "string"
+        },
+        "min_version": {
+          "description": "最低 TLS 版本，默认 1.2。",
+          "enum": [
+            "1.2",
+            "1.3"
+          ]
+        },
+        "sni": {
+          "description": "证书域名，同时是客户端使用的 SNI。",
+          "format": "hostname",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "sni",
+        "cert_mode"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:akari-project:panel-spec:schemas:inbound:hysteria2-quic",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Inbound.settings_json：protocol=hysteria2，transport=quic（spec/21 AGT-13）。用户凭据不在此处，由 Credential 下发。",
+  "properties": {
+    "down_mbps": {
+      "description": "服务端下行带宽上限（Mbps），0 表示不限并由客户端声明。",
+      "maximum": 100000,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "is_client_bandwidth_ignored": {
+      "description": "忽略客户端声明的带宽，使用 BBR 拥塞控制。默认 false。",
+      "type": "boolean"
+    },
+    "masquerade_url": {
+      "description": "认证失败时反向代理到的网址，用于伪装。",
+      "format": "uri",
+      "maxLength": 2048,
+      "pattern": "^https?://",
+      "type": "string"
+    },
+    "obfs": {
+      "additionalProperties": false,
+      "description": "可选的 Salamander 混淆。启用后客户端必须配置相同的密钥。",
+      "properties": {
+        "key": {
+          "description": "混淆密钥，入站内全部连接共用，不是用户凭据。",
+          "maxLength": 128,
+          "minLength": 8,
+          "type": "string"
+        },
+        "type": {
+          "const": "salamander"
+        }
+      },
+      "required": [
+        "type",
+        "key"
+      ],
+      "type": "object"
+    },
+    "tls": {
+      "$ref": "#/$defs/tls"
+    },
+    "transport": {
+      "const": "quic",
+      "description": "必填，等于本组合的传输，与 Inbound.transport 一致。数据库校验以 settings->>'transport' 为准。"
+    },
+    "up_mbps": {
+      "description": "服务端上行带宽上限（Mbps），0 表示不限并由客户端声明。",
+      "maximum": 100000,
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "transport",
+    "tls"
+  ],
+  "title": "Hysteria2",
+  "type": "object",
+  "x-kernels": {
+    "singbox": "stable",
+    "xray": "experimental"
+  }
+}

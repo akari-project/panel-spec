@@ -1,0 +1,19 @@
+{
+  "transport": "ws",
+  "security": "tls",
+  "tls": {
+    "sni": "edge-hk-1.example.com",
+    "alpn": [
+      "h2",
+      "http/1.1"
+    ],
+    "min_version": "1.2",
+    "cert_mode": "acme_http"
+  },
+  "ws": {
+    "path": "/ws",
+    "host": "edge-hk-1.example.com",
+    "max_early_data": 2048,
+    "early_data_header_name": "Sec-WebSocket-Protocol"
+  }
+}

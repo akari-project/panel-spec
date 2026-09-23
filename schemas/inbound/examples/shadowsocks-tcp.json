@@ -1,0 +1,5 @@
+{
+  "transport": "tcp",
+  "method": "2022-blake3-aes-128-gcm",
+  "inbound_key": "yvrzglnrI6Hfn4srVGunPg=="
+}

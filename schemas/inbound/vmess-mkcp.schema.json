@@ -1,0 +1,89 @@
+{
+  "$defs": {
+    "mkcp": {
+      "additionalProperties": false,
+      "properties": {
+        "downlink_capacity_mbps": {
+          "description": "下行容量，默认 20。",
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "header_type": {
+          "description": "包头伪装，默认 none。",
+          "enum": [
+            "none",
+            "srtp",
+            "utp",
+            "wechat-video",
+            "dtls",
+            "wireguard"
+          ]
+        },
+        "is_congestion_enabled": {
+          "description": "启用拥塞控制，默认 false。",
+          "type": "boolean"
+        },
+        "mtu": {
+          "description": "默认 1350。",
+          "maximum": 1460,
+          "minimum": 576,
+          "type": "integer"
+        },
+        "read_buffer_mb": {
+          "description": "单连接读缓冲，默认 2。",
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "seed": {
+          "description": "混淆种子，入站内全部连接共用，不是用户凭据。",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "tti_ms": {
+          "description": "传输时间间隔，默认 50。",
+          "maximum": 100,
+          "minimum": 10,
+          "type": "integer"
+        },
+        "uplink_capacity_mbps": {
+          "description": "上行容量，默认 5。",
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "write_buffer_mb": {
+          "description": "单连接写缓冲，默认 2。",
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "urn:akari-project:panel-spec:schemas:inbound:vmess-mkcp",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Inbound.settings_json：protocol=vmess，transport=mkcp（spec/21 AGT-13）。用户凭据不在此处，由 Credential 下发。",
+  "properties": {
+    "mkcp": {
+      "$ref": "#/$defs/mkcp"
+    },
+    "transport": {
+      "const": "mkcp",
+      "description": "必填，等于本组合的传输，与 Inbound.transport 一致。数据库校验以 settings->>'transport' 为准。"
+    }
+  },
+  "required": [
+    "transport"
+  ],
+  "title": "VMess over mKCP",
+  "type": "object",
+  "x-kernels": {
+    "singbox": "unsupported",
+    "xray": "stable"
+  }
+}

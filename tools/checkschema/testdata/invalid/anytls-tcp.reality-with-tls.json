@@ -1,0 +1,21 @@
+{
+  "transport": "tcp",
+  "security": "reality",
+  "tls": {
+    "sni": "a.example.com",
+    "cert_mode": "acme_http"
+  },
+  "reality": {
+    "private_key": "XpWhkKBAD2LUDaFQPzHn6IMRK43daKf8t3pHkxmDCtY",
+    "public_key": "6xQP4ob0T5O-7PTjhDoRsoePEc-uYvPUanPWUITGiLI",
+    "short_ids": [
+      "",
+      "6ba85179e30d4fc2"
+    ],
+    "handshake_address": "www.example.org",
+    "handshake_port": 443,
+    "sni_names": [
+      "www.example.org"
+    ]
+  }
+}
