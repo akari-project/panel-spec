@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Command vectors 按 proto/node/v1 注释中的字节级定义，生成握手与会话加密的测试向量。
+// Command vectors 按 proto/node/v1 注释中的字节级定义，生成握手、会话加密、DNS 凭据加密、
+// 快照校验和与 Agent 升级签名的测试向量。
 // 模拟 Agent 与真实 Agent 都必须通过这些向量（spec/20 20.6）。
 //
 // 用法：go run ./tools/vectors > testdata/node-v1-vectors.json
 package main
 
 import (
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -167,9 +169,21 @@ func main() {
 	})
 	must(err)
 
+	// AgentUpgrade 签名（messages.proto，spec/40 DEP-09）：
+	// "akari-agent-upgrade-v1" | version | sha256，sha256 为 32 字节字节串，同样加长度前缀。
+	upgradeSeed := fill(ed25519.SeedSize, 0xc0)
+	upgradeKey := ed25519.NewKeyFromSeed(upgradeSeed)
+	upgradeVersion := "0.1.1"
+	upgradeDigest := sum([]byte("akari node-agent 0.1.1 test artifact"))
+	upgradeInput := concat(field([]byte("akari-agent-upgrade-v1")), field([]byte(upgradeVersion)), field(upgradeDigest))
+	upgradeSig := ed25519.Sign(upgradeKey, upgradeInput)
+	if !ed25519.Verify(upgradeKey.Public().(ed25519.PublicKey), upgradeInput, upgradeSig) {
+		panic("ed25519 verify failed")
+	}
+
 	h := hex.EncodeToString
 	out := map[string]any{
-		"description": "node.v1 握手与会话加密测试向量，定义见 proto/node/v1/envelope.proto 与 messages.proto 的注释。所有字节串为十六进制。",
+		"description": "node.v1 握手、会话加密、DNS 凭据加密、快照校验和与 Agent 升级签名的测试向量，定义见 proto/node/v1/envelope.proto 与 messages.proto 的注释。所有字节串为十六进制；agent_upgrade 的私钥种子只用于测试。",
 		"inputs": map[string]any{
 			"psk":                     h(psk),
 			"node_id":                 nodeIDText,
@@ -213,6 +227,15 @@ func main() {
 			"plaintext": string(dnsPlain),
 			"nonce":     h(dnsNonce),
 			"sealed":    h(dnsSealed),
+		},
+		"agent_upgrade": map[string]any{
+			"key_id":          1,
+			"private_seed":    h(upgradeSeed),
+			"public_key":      h(upgradeKey.Public().(ed25519.PublicKey)),
+			"version":         upgradeVersion,
+			"sha256":          h(upgradeDigest),
+			"signature_input": h(upgradeInput),
+			"signature":       h(upgradeSig),
 		},
 		"sync_full": map[string]any{
 			"snapshot": h(snapshotRaw),

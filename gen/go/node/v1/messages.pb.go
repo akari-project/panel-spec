@@ -840,8 +840,9 @@ type AgentUpgrade struct {
 	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
 	Url     string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
 	Sha256  []byte                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
-	// Ed25519 签名，签名输入为 "akari-agent-upgrade-v1" | version | sha256(32)（编码约定见 envelope.proto 文件头），
-	// 把版本号与制品摘要绑定在一起（spec/40 DEP-09）。
+	// Ed25519 签名，签名输入为 "akari-agent-upgrade-v1" | version | sha256（编码约定见 envelope.proto 文件头）。
+	// 其中 sha256 为 32 字节字节串，与其他字节串一样按 “|” 规则前置 4 字节大端长度。
+	// 签名把版本号与制品摘要绑定在一起（spec/40 DEP-09）；测试向量见 testdata/node-v1-vectors.json 的 agent_upgrade。
 	Signature     []byte `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
 	KeyId         uint32 `protobuf:"varint,5,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"` // Agent 内置“当前”与“下一把”两个公钥，按 key_id 选择（spec/40 DEP-09）
 	unknownFields protoimpl.UnknownFields

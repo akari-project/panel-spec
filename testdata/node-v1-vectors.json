@@ -1,5 +1,14 @@
 {
-  "description": "node.v1 握手与会话加密测试向量，定义见 proto/node/v1/envelope.proto 与 messages.proto 的注释。所有字节串为十六进制。",
+  "agent_upgrade": {
+    "key_id": 1,
+    "private_seed": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "public_key": "dde3bccec7f3a66a1115f45d720f4dc135c3ae7c4e22dca38fdb1efd6a495ff8",
+    "sha256": "467f24fecbf10874b52294a383078117e423e64684004b8e264b2a3557291b70",
+    "signature": "f6a6a25325186794d04bee5f360a3c199b406eedd760082b1739cc9adab41277537592ba8736b558f78f90993dd2e72cd2ca93f9c0f128309e6f3907e7fe0404",
+    "signature_input": "00000016616b6172692d6167656e742d757067726164652d763100000005302e312e3100000020467f24fecbf10874b52294a383078117e423e64684004b8e264b2a3557291b70",
+    "version": "0.1.1"
+  },
+  "description": "node.v1 握手、会话加密、DNS 凭据加密、快照校验和与 Agent 升级签名的测试向量，定义见 proto/node/v1/envelope.proto 与 messages.proto 的注释。所有字节串为十六进制；agent_upgrade 的私钥种子只用于测试。",
   "dns_secret": {
     "key": "ea202f1e0c7e97efb3b8cc66f263073fe5648e17c8fcd0e13facc21ea17fab5c",
     "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7",

@@ -9,7 +9,7 @@ info:
     ## 认证
 
     - 只接受受众（`aud`）为 `console` 的 PASETO v4.public 访问令牌。这种令牌只能由本接口的 `POST /v1/sessions` 签发，且本次登录必须完成二次验证（令牌带 `amr` 声明，spec/10 AUTH-21）。客户端接口签发的令牌、设备授权与扫码登录签发的令牌一律返回 401 `unauthenticated`。
-    - 浏览器认证与客户端接口的用户中心一致：令牌不出现在响应体中，访问令牌与刷新令牌分别放在 `__Host-access_token`、`__Host-refresh_token` Cookie（HttpOnly、Secure、SameSite=Strict）中。刷新令牌自登录起 12 小时绝对失效、空闲 30 分钟失效，通过 `POST /v1/oauth/token` 轮换。
+    - 浏览器认证的方式与客户端接口的用户中心相同，令牌不出现在响应体中；但使用独立的 Cookie 名：访问令牌与刷新令牌分别放在 `__Host-console_access_token`、`__Host-console_refresh_token` Cookie（HttpOnly、Secure、SameSite=Strict、Path=/）中，避免与用户中心同主机按路径前缀部署时互相覆盖（spec/10 AUTH-08）。刷新令牌自登录起 12 小时绝对失效、空闲 30 分钟失效，通过 `POST /v1/oauth/token` 轮换。
 
     ## 权限（`x-permission`）
 
@@ -89,7 +89,7 @@ paths:
         1. 提交邮箱与密码。密码正确时一律返回 401 `mfa_required`，附 `challenge_id` 与 `methods`；管理员尚未绑定 TOTP（首次登录）时另附 `totp_enrollment`（AUTH-22）。非管理员账号返回 403 `forbidden`。
         2. 提交 `challenge_id` 与 `totp_code`、`recovery_code`、`webauthn_assertion` 三者之一，不再提交密码。首次绑定时只接受 `totp_code`，成功后响应附 10 个恢复码。
 
-        成功时签发受众为 `console` 的访问令牌。令牌不出现在响应体中：访问令牌与刷新令牌分别以 `__Host-access_token`、`__Host-refresh_token` Cookie（HttpOnly、Secure、SameSite=Strict，Path=/）下发；刷新令牌 12 小时绝对失效、空闲 30 分钟失效（AUTH-21）。每个 challenge 最多尝试 5 次，失败次数计入 AUTH-09 的登录限流。
+        成功时签发受众为 `console` 的访问令牌。令牌不出现在响应体中：访问令牌与刷新令牌分别以 `__Host-console_access_token`、`__Host-console_refresh_token` Cookie（HttpOnly、Secure、SameSite=Strict，Path=/）下发；刷新令牌 12 小时绝对失效、空闲 30 分钟失效（AUTH-21）。每个 challenge 最多尝试 5 次，失败次数计入 AUTH-09 的登录限流。
       security: []
       x-permission: none
       requestBody:
@@ -142,10 +142,10 @@ paths:
                   has_passkey: false
           headers:
             Set-Cookie:
-              description: '两个 Cookie：`__Host-access_token`（访问令牌，Max-Age=900）与 `__Host-refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）'
+              description: '两个 Cookie：`__Host-console_access_token`（访问令牌，Max-Age=900）与 `__Host-console_refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）'
               schema:
                 type: string
-              example: '__Host-access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict'
+              example: '__Host-console_access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict'
         '401':
           description: '需要二次验证，或凭据错误'
           content:
@@ -197,17 +197,17 @@ paths:
       - auth
       operationId: deleteCurrentSession
       summary: '登出'
-      description: '吊销当前管理会话，并以过期的 Set-Cookie 清除 `__Host-access_token` 与 `__Host-refresh_token`。'
+      description: '吊销当前管理会话，并以过期的 Set-Cookie 清除 `__Host-console_access_token` 与 `__Host-console_refresh_token`。'
       x-permission: none
       responses:
         '204':
           description: '已登出'
           headers:
             Set-Cookie:
-              description: '以 Max-Age=0 清除 `__Host-access_token` 与 `__Host-refresh_token`'
+              description: '以 Max-Age=0 清除 `__Host-console_access_token` 与 `__Host-console_refresh_token`'
               schema:
                 type: string
-              example: '__Host-access_token=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict'
+              example: '__Host-console_access_token=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict'
         '401':
           description: '令牌无效'
           content:
@@ -231,7 +231,7 @@ paths:
       - auth
       operationId: refreshToken
       summary: '刷新访问令牌'
-      description: '只支持 `grant_type=refresh_token`（AUTH-21）。刷新令牌由 `__Host-refresh_token` Cookie 携带，不在表单中提交；每次使用即轮换（AUTH-07），新的访问令牌与刷新令牌同样以 Set-Cookie 下发，不出现在响应体中。错误按 RFC 6749 §5.2 返回 `application/json`（CONV-16 例外）；`default` 只用于限流、服务不可用等非 OAuth 错误。'
+      description: '只支持 `grant_type=refresh_token`（AUTH-21）。刷新令牌由 `__Host-console_refresh_token` Cookie 携带，不在表单中提交；每次使用即轮换（AUTH-07），新的访问令牌与刷新令牌同样以 Set-Cookie 下发，不出现在响应体中。错误按 RFC 6749 §5.2 返回 `application/json`（CONV-16 例外）；`default` 只用于限流、服务不可用等非 OAuth 错误。'
       security: []
       x-permission: none
       requestBody:
@@ -263,10 +263,10 @@ paths:
                 refresh_expires_at: '2026-09-23T21:00:00+08:00'
           headers:
             Set-Cookie:
-              description: '两个 Cookie：`__Host-access_token`（访问令牌，Max-Age=900）与 `__Host-refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）'
+              description: '两个 Cookie：`__Host-console_access_token`（访问令牌，Max-Age=900）与 `__Host-console_refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）'
               schema:
                 type: string
-              example: '__Host-access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict'
+              example: '__Host-console_access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict'
             Cache-Control:
               description: '`no-store`（RFC 6749 §5.1）'
               schema:
@@ -4200,7 +4200,7 @@ paths:
       - hosts
       operationId: createHostInbound
       summary: '添加入站'
-      description: '`settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时由控制面生成密钥对，响应中返回公钥。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。'
+      description: '`settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时的处理顺序为：先由控制面生成密钥对（私钥放入 `secrets.reality.private_key`，公钥写入 `settings.reality.public_key`），再把 `settings` 与 `secrets` 深度合并，最后按 schema 校验合并结果；响应中返回公钥。`generate` 与显式的 `secrets.reality.private_key` 同时提交时返回 400 `invalid_request`，`errors[].code` 为 `not_allowed`（`field` 为 `reality_key_action`）。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。'
       x-permission: 'hosts.*'
       parameters:
       - name: id
@@ -4274,6 +4274,24 @@ paths:
           headers:
             ETag:
               $ref: '#/components/headers/ETag'
+        '400':
+          description: '参数错误'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                reality_key_conflict:
+                  summary: '同时提交 generate 与显式私钥'
+                  value:
+                    type: 'https://docs.example.invalid/problems/invalid_request'
+                    title: '参数错误'
+                    status: 400
+                    code: invalid_request
+                    request_id: '01927c3f-0b12-7c55-8d10-2f3e4a5b6c7d'
+                    errors:
+                    - field: reality_key_action
+                      code: not_allowed
         '409':
           description: '内核不支持'
           content:
@@ -4372,7 +4390,7 @@ paths:
       operationId: updateHostInbound
       summary: '修改入站'
       description: |-
-        `settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时由控制面生成密钥对，响应中返回公钥。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
+        `settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时的处理顺序为：先由控制面生成密钥对（私钥放入 `secrets.reality.private_key`，公钥写入 `settings.reality.public_key`），再把 `settings` 与 `secrets` 深度合并，最后按 schema 校验合并结果；响应中返回公钥。`generate` 与显式的 `secrets.reality.private_key` 同时提交时返回 400 `invalid_request`，`errors[].code` 为 `not_allowed`（`field` 为 `reality_key_action`）。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
 
         必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
       x-permission: 'hosts.*'
@@ -4440,6 +4458,24 @@ paths:
           headers:
             ETag:
               $ref: '#/components/headers/ETag'
+        '400':
+          description: '参数错误'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                reality_key_conflict:
+                  summary: '同时提交 generate 与显式私钥'
+                  value:
+                    type: 'https://docs.example.invalid/problems/invalid_request'
+                    title: '参数错误'
+                    status: 400
+                    code: invalid_request
+                    request_id: '01927c3f-0b12-7c55-8d10-2f3e4a5b6c7d'
+                    errors:
+                    - field: reality_key_action
+                      code: not_allowed
         '409':
           description: '冲突'
           content:
@@ -9046,8 +9082,8 @@ components:
     cookie:
       type: apiKey
       in: cookie
-      name: __Host-access_token
-      description: '受众为 `console` 的 PASETO v4.public 访问令牌（AUTH-21），由 `POST /v1/sessions` 以 HttpOnly、Secure、SameSite=Strict Cookie 下发；刷新令牌 Cookie `__Host-refresh_token` 只用于 `POST /v1/oauth/token`（AUTH-08）'
+      name: __Host-console_access_token
+      description: '受众为 `console` 的 PASETO v4.public 访问令牌（AUTH-21），由 `POST /v1/sessions` 以 HttpOnly、Secure、SameSite=Strict Cookie 下发；刷新令牌 Cookie `__Host-console_refresh_token` 只用于 `POST /v1/oauth/token`（AUTH-08）'
   parameters:
     Limit:
       name: limit
@@ -9100,11 +9136,11 @@ components:
       name: Audit-Reason
       in: header
       required: false
-      description: '操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。'
+      description: '操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：值为 UTF-8 百分号编码，上限按解码后计算，为 1 到 500 个 Unicode 码点；`maxLength` 6000 是编码后的上限（500 个码点 × 每个码点最多 4 字节 × 每字节 3 个字符）。缺少、无法解码或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。'
       schema:
         type: string
         minLength: 1
-        maxLength: 4500
+        maxLength: 6000
       example: '%E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C'
   headers:
     ETag:
@@ -9369,11 +9405,11 @@ components:
         access_expires_at:
           type: string
           format: date-time
-          description: '访问令牌（Cookie `__Host-access_token`）的失效时间，15 分钟'
+          description: '访问令牌（Cookie `__Host-console_access_token`）的失效时间，15 分钟'
         refresh_expires_at:
           type: string
           format: date-time
-          description: '刷新令牌（Cookie `__Host-refresh_token`）的绝对失效时间，自登录起 12 小时'
+          description: '刷新令牌（Cookie `__Host-console_refresh_token`）的绝对失效时间，自登录起 12 小时'
         staff:
           $ref: '#/components/schemas/StaffMe'
         recovery_codes:
@@ -11348,7 +11384,7 @@ components:
           enum:
           - keep
           - generate
-          description: '`generate` 由控制面生成 Reality 密钥对（NODE-04）：私钥存入 secrets，公钥写入 `settings.reality.public_key` 并在响应中返回'
+          description: '`generate` 由控制面生成 Reality 密钥对（NODE-04）：私钥存入 secrets，公钥写入 `settings.reality.public_key` 并在响应中返回。生成在合并与 schema 校验之前进行；不能与显式的 `secrets.reality.private_key` 同时提交（400 `invalid_request`，`not_allowed`）'
     InboundUpdate:
       type: object
       properties:
@@ -11391,7 +11427,7 @@ components:
           enum:
           - keep
           - generate
-          description: '`generate` 重新生成 Reality 密钥对'
+          description: '`generate` 重新生成 Reality 密钥对，生成在合并与 schema 校验之前进行；不能与显式的 `secrets.reality.private_key` 同时提交（400 `invalid_request`，`not_allowed`）'
       minProperties: 1
     HostRoute:
       type: object
@@ -12751,16 +12787,21 @@ components:
           format: uuid
         filename:
           type: string
+          maxLength: 255
+          description: '上传时 multipart 分段的文件名（已去除路径与控制字符）；下载时用于 `Content-Disposition`'
         content_type:
           type: string
           enum:
           - image/png
           - image/jpeg
           - image/webp
+          description: '按文件内容识别的类型（OPS-10）'
         bytes_size:
           type: integer
+          format: int64
           minimum: 1
           maximum: 5242880
+          description: '文件字节数'
         created_at:
           type: string
           format: date-time

@@ -20,7 +20,7 @@ export interface paths {
          *     1. 提交邮箱与密码。密码正确时一律返回 401 `mfa_required`，附 `challenge_id` 与 `methods`；管理员尚未绑定 TOTP（首次登录）时另附 `totp_enrollment`（AUTH-22）。非管理员账号返回 403 `forbidden`。
          *     2. 提交 `challenge_id` 与 `totp_code`、`recovery_code`、`webauthn_assertion` 三者之一，不再提交密码。首次绑定时只接受 `totp_code`，成功后响应附 10 个恢复码。
          *
-         *     成功时签发受众为 `console` 的访问令牌。令牌不出现在响应体中：访问令牌与刷新令牌分别以 `__Host-access_token`、`__Host-refresh_token` Cookie（HttpOnly、Secure、SameSite=Strict，Path=/）下发；刷新令牌 12 小时绝对失效、空闲 30 分钟失效（AUTH-21）。每个 challenge 最多尝试 5 次，失败次数计入 AUTH-09 的登录限流。
+         *     成功时签发受众为 `console` 的访问令牌。令牌不出现在响应体中：访问令牌与刷新令牌分别以 `__Host-console_access_token`、`__Host-console_refresh_token` Cookie（HttpOnly、Secure、SameSite=Strict，Path=/）下发；刷新令牌 12 小时绝对失效、空闲 30 分钟失效（AUTH-21）。每个 challenge 最多尝试 5 次，失败次数计入 AUTH-09 的登录限流。
          */
         post: operations["createSession"];
         delete?: never;
@@ -41,7 +41,7 @@ export interface paths {
         post?: never;
         /**
          * 登出
-         * @description 吊销当前管理会话，并以过期的 Set-Cookie 清除 `__Host-access_token` 与 `__Host-refresh_token`。
+         * @description 吊销当前管理会话，并以过期的 Set-Cookie 清除 `__Host-console_access_token` 与 `__Host-console_refresh_token`。
          */
         delete: operations["deleteCurrentSession"];
         options?: never;
@@ -60,7 +60,7 @@ export interface paths {
         put?: never;
         /**
          * 刷新访问令牌
-         * @description 只支持 `grant_type=refresh_token`（AUTH-21）。刷新令牌由 `__Host-refresh_token` Cookie 携带，不在表单中提交；每次使用即轮换（AUTH-07），新的访问令牌与刷新令牌同样以 Set-Cookie 下发，不出现在响应体中。错误按 RFC 6749 §5.2 返回 `application/json`（CONV-16 例外）；`default` 只用于限流、服务不可用等非 OAuth 错误。
+         * @description 只支持 `grant_type=refresh_token`（AUTH-21）。刷新令牌由 `__Host-console_refresh_token` Cookie 携带，不在表单中提交；每次使用即轮换（AUTH-07），新的访问令牌与刷新令牌同样以 Set-Cookie 下发，不出现在响应体中。错误按 RFC 6749 §5.2 返回 `application/json`（CONV-16 例外）；`default` 只用于限流、服务不可用等非 OAuth 错误。
          */
         post: operations["refreshToken"];
         delete?: never;
@@ -939,7 +939,7 @@ export interface paths {
         put?: never;
         /**
          * 添加入站
-         * @description `settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时由控制面生成密钥对，响应中返回公钥。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
+         * @description `settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时的处理顺序为：先由控制面生成密钥对（私钥放入 `secrets.reality.private_key`，公钥写入 `settings.reality.public_key`），再把 `settings` 与 `secrets` 深度合并，最后按 schema 校验合并结果；响应中返回公钥。`generate` 与显式的 `secrets.reality.private_key` 同时提交时返回 400 `invalid_request`，`errors[].code` 为 `not_allowed`（`field` 为 `reality_key_action`）。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
          */
         post: operations["createHostInbound"];
         delete?: never;
@@ -970,7 +970,7 @@ export interface paths {
         head?: never;
         /**
          * 修改入站
-         * @description `settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时由控制面生成密钥对，响应中返回公钥。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
+         * @description `settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时的处理顺序为：先由控制面生成密钥对（私钥放入 `secrets.reality.private_key`，公钥写入 `settings.reality.public_key`），再把 `settings` 与 `secrets` 深度合并，最后按 schema 校验合并结果；响应中返回公钥。`generate` 与显式的 `secrets.reality.private_key` 同时提交时返回 400 `invalid_request`，`errors[].code` 为 `not_allowed`（`field` 为 `reality_key_action`）。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
          *
          *     必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
          */
@@ -2143,12 +2143,12 @@ export interface components {
             session_id: string;
             /**
              * Format: date-time
-             * @description 访问令牌（Cookie `__Host-access_token`）的失效时间，15 分钟
+             * @description 访问令牌（Cookie `__Host-console_access_token`）的失效时间，15 分钟
              */
             access_expires_at: string;
             /**
              * Format: date-time
-             * @description 刷新令牌（Cookie `__Host-refresh_token`）的绝对失效时间，自登录起 12 小时
+             * @description 刷新令牌（Cookie `__Host-console_refresh_token`）的绝对失效时间，自登录起 12 小时
              */
             refresh_expires_at: string;
             staff: components["schemas"]["StaffMe"];
@@ -2987,7 +2987,7 @@ export interface components {
             /** @description 只写：密钥字段，结构与 settings 中对应位置相同（如 `{"reality": {"private_key": "..."}}`），按 CONV-19 加密存储，永不返回 */
             secrets?: Record<string, never>;
             /**
-             * @description `generate` 由控制面生成 Reality 密钥对（NODE-04）：私钥存入 secrets，公钥写入 `settings.reality.public_key` 并在响应中返回
+             * @description `generate` 由控制面生成 Reality 密钥对（NODE-04）：私钥存入 secrets，公钥写入 `settings.reality.public_key` 并在响应中返回。生成在合并与 schema 校验之前进行；不能与显式的 `secrets.reality.private_key` 同时提交（400 `invalid_request`，`not_allowed`）
              * @enum {string}
              */
             reality_key_action?: "keep" | "generate";
@@ -3007,7 +3007,7 @@ export interface components {
             /** @description 只写：提交时整体替换已保存的密钥；省略表示保留 */
             secrets?: Record<string, never>;
             /**
-             * @description `generate` 重新生成 Reality 密钥对
+             * @description `generate` 重新生成 Reality 密钥对，生成在合并与 schema 校验之前进行；不能与显式的 `secrets.reality.private_key` 同时提交（400 `invalid_request`，`not_allowed`）
              * @enum {string}
              */
             reality_key_action?: "keep" | "generate";
@@ -3564,9 +3564,17 @@ export interface components {
         Attachment: {
             /** Format: uuid */
             id: string;
+            /** @description 上传时 multipart 分段的文件名（已去除路径与控制字符）；下载时用于 `Content-Disposition` */
             filename: string;
-            /** @enum {string} */
+            /**
+             * @description 按文件内容识别的类型（OPS-10）
+             * @enum {string}
+             */
             content_type: "image/png" | "image/jpeg" | "image/webp";
+            /**
+             * Format: int64
+             * @description 文件字节数
+             */
             bytes_size: number;
             /** Format: date-time */
             created_at: string;
@@ -4073,7 +4081,7 @@ export interface components {
         /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
         MfaAssertion: string;
         /**
-         * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+         * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：值为 UTF-8 百分号编码，上限按解码后计算，为 1 到 500 个 Unicode 码点；`maxLength` 6000 是编码后的上限（500 个码点 × 每个码点最多 4 字节 × 每字节 3 个字符）。缺少、无法解码或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
          * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
          */
         AuditReason: string;
@@ -4109,8 +4117,8 @@ export interface operations {
             201: {
                 headers: {
                     /**
-                     * @description 两个 Cookie：`__Host-access_token`（访问令牌，Max-Age=900）与 `__Host-refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）
-                     * @example __Host-access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict
+                     * @description 两个 Cookie：`__Host-console_access_token`（访问令牌，Max-Age=900）与 `__Host-console_refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）
+                     * @example __Host-console_access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict
                      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
@@ -4173,8 +4181,8 @@ export interface operations {
             204: {
                 headers: {
                     /**
-                     * @description 以 Max-Age=0 清除 `__Host-access_token` 与 `__Host-refresh_token`
-                     * @example __Host-access_token=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict
+                     * @description 以 Max-Age=0 清除 `__Host-console_access_token` 与 `__Host-console_refresh_token`
+                     * @example __Host-console_access_token=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict
                      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
@@ -4218,8 +4226,8 @@ export interface operations {
             200: {
                 headers: {
                     /**
-                     * @description 两个 Cookie：`__Host-access_token`（访问令牌，Max-Age=900）与 `__Host-refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）
-                     * @example __Host-access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict
+                     * @description 两个 Cookie：`__Host-console_access_token`（访问令牌，Max-Age=900）与 `__Host-console_refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）
+                     * @example __Host-console_access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict
                      */
                     "Set-Cookie"?: string;
                     /**
@@ -4619,7 +4627,7 @@ export interface operations {
             query?: never;
             header?: {
                 /**
-                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：值为 UTF-8 百分号编码，上限按解码后计算，为 1 到 500 个 Unicode 码点；`maxLength` 6000 是编码后的上限（500 个码点 × 每个码点最多 4 字节 × 每字节 3 个字符）。缺少、无法解码或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
@@ -4828,7 +4836,7 @@ export interface operations {
             query?: never;
             header?: {
                 /**
-                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：值为 UTF-8 百分号编码，上限按解码后计算，为 1 到 500 个 Unicode 码点；`maxLength` 6000 是编码后的上限（500 个码点 × 每个码点最多 4 字节 × 每字节 3 个字符）。缺少、无法解码或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
@@ -6394,7 +6402,7 @@ export interface operations {
             query?: never;
             header?: {
                 /**
-                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：值为 UTF-8 百分号编码，上限按解码后计算，为 1 到 500 个 Unicode 码点；`maxLength` 6000 是编码后的上限（500 个码点 × 每个码点最多 4 字节 × 每字节 3 个字符）。缺少、无法解码或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
@@ -8284,6 +8292,15 @@ export interface operations {
                     "application/json": components["schemas"]["Inbound"];
                 };
             };
+            /** @description 参数错误 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description 内核不支持 */
             409: {
                 headers: {
@@ -8480,6 +8497,15 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["Inbound"];
+                };
+            };
+            /** @description 参数错误 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             /** @description 冲突 */
@@ -12201,7 +12227,7 @@ export interface operations {
             query?: never;
             header?: {
                 /**
-                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：值为 UTF-8 百分号编码，上限按解码后计算，为 1 到 500 个 Unicode 码点；`maxLength` 6000 是编码后的上限（500 个码点 × 每个码点最多 4 字节 × 每字节 3 个字符）。缺少、无法解码或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
@@ -12439,7 +12465,7 @@ export interface operations {
             query?: never;
             header?: {
                 /**
-                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：值为 UTF-8 百分号编码，上限按解码后计算，为 1 到 500 个 Unicode 码点；`maxLength` 6000 是编码后的上限（500 个码点 × 每个码点最多 4 字节 × 每字节 3 个字符）。缺少、无法解码或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
@@ -12637,7 +12663,7 @@ export interface operations {
             query?: never;
             header?: {
                 /**
-                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：值为 UTF-8 百分号编码，上限按解码后计算，为 1 到 500 个 Unicode 码点；`maxLength` 6000 是编码后的上限（500 个码点 × 每个码点最多 4 字节 × 每字节 3 个字符）。缺少、无法解码或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
