@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // 控制面与 node-agent 之间的传输信封。语义见 spec/20-node-protocol.md。
 //
-// 编码约定（适用于本文件中所有 MAC、密钥派生与附加数据）：
-//   - 整数为大端定长（字段后括号内为字节数）；
-//   - 字符串与字节串前置 4 字节大端长度；
-//   - “|” 表示按顺序拼接；
+// 编码约定（适用于 proto/node/v1 下所有文件中的 MAC、签名、密钥派生与附加数据）：
+//   - “A | B”：带长度前缀的拼接，只用于 MAC 与签名的输入。
+//       字符串与字节串编码为 4 字节大端长度 + 原始字节；
+//       整数编码为大端定长，字节数写在括号内，如 ts_ms(8)，不加长度前缀。
+//   - “A || B”：原始拼接，不加任何前缀，用于 HKDF info、附加数据与密文布局。
+//   - “x(n)”：出现在 || 中时，表示 n 字节的定长原始字节。
+//   - 字符串一律为 UTF-8 字节。
+//   - node_id 的文本形式为 RFC 9562 规范的小写 UUID，例如 0192f000-0000-7000-8000-000000000001；
+//     二进制形式为其 16 字节。控制面计算 HelloAck MAC 时使用 Hello 中收到的原文。
 //   - 需要覆盖嵌套消息时，一律对“收到的原始字节”取 SHA-256，接收方不重新序列化（spec/20 20.3）。
 // 测试向量见 testdata/node-v1-vectors.json，由 tools/vectors 生成。
 syntax = "proto3";
@@ -24,13 +29,14 @@ message Frame {
     // 明文为序列化后的 Envelope。
     // 附加数据 = direction(1) || seq(8)，direction：Agent → 控制面为 0x01，控制面 → Agent 为 0x02。
     // 密钥：K = HKDF-SHA256(ikm = X25519(本方临时私钥, 对方临时公钥), salt = Hello.nonce,
-    //   info = "akari-node-session-v1" | node_id(16，UUID 的二进制形式) | Hello.ephemeral_pubkey(32) | HelloAck.ephemeral_pubkey(32),
+    //   info = "akari-node-session-v1" || node_id(16，二进制形式) || Hello.ephemeral_pubkey(32) || HelloAck.ephemeral_pubkey(32),
     //   L = 64)。K[0:32] 用于 Agent → 控制面，K[32:64] 用于控制面 → Agent。
     // nonce 不得由 seq 派生（spec/20 NODE-11）。
     bytes sealed = 3;
     HelloReject hello_reject = 5;
   }
-  // 会话内每个方向从 1 开始递增；重复或不递增即关闭连接（spec/20 NODE-12）。
+  // 握手帧（hello、hello_ack、hello_reject）为 0。之后会话内每个方向从 1 开始递增；
+  // 重复或不递增即关闭连接（spec/20 NODE-12）。
   uint64 seq = 4;
 }
 
@@ -38,7 +44,7 @@ message Hello {
   reserved 6;
   reserved "capabilities";
 
-  string node_id = 1; // UUID 文本形式
+  string node_id = 1; // 小写 UUID 文本形式（见文件头）
   int64 ts_ms = 2;
   bytes nonce = 3; // 16 字节随机数
   uint32 proto_version = 4;
@@ -103,7 +109,8 @@ message KernelSupport {
 message ControlPlaneCapabilities {
   string panel_version = 1;
   bool supports_lease_release = 2; // 接受 LeaseRequest.is_release
-  bool supports_source_set = 3; // 会下发 SourceSet
+  reserved 3;
+  reserved "supports_source_set";
 }
 
 // 会话内的业务信封（加密后放入 Frame.sealed）。

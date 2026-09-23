@@ -16,7 +16,7 @@ message EnrollRequest {
   string enroll_token = 1; // 一次性接入令牌（spec/20 NODE-01）
   HostInfo host = 2;
   bytes capabilities_raw = 3; // 序列化后的 Capabilities
-  // 主机指纹：SHA-256(机器 ID | 本地生成并持久化的随机数)，十六进制。
+  // 主机指纹：SHA-256(机器 ID || 本地生成并持久化的 32 字节随机数) 的小写十六进制；控制面只做不透明比较。
   // 首次成功后 10 分钟内，以同一令牌与同一指纹重复提交，返回相同结果（spec/20 NODE-02）。
   string host_fingerprint = 4;
 }

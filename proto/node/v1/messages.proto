@@ -44,8 +44,9 @@ message Snapshot {
   repeated Inbound inbounds = 3;
   repeated Credential credentials = 4;
   bytes routes_json = 5;
-  // 以 K_dns = HKDF-SHA256(ikm = PSK, info = "akari-dns-secret-v1", L = 32) 做 XChaCha20-Poly1305 加密：
-  // nonce(24) || 密文与 tag（spec/20 NODE-25）。
+  // 以 K_dns = HKDF-SHA256(ikm = PSK, salt = 空（等价于 32 个零字节）, info = "akari-dns-secret-v1", L = 32)
+  // 做 XChaCha20-Poly1305 加密，附加数据为空：nonce(24) || 密文与 tag（spec/20 NODE-25）。
+  // PSK 取当前会话通过验证的那一把；重新接入的过渡期结束、或 PSK 变化后，控制面用新 PSK 重新加密下发。
   bytes dns_provider_secret = 6;
   OfflinePolicy offline_policy = 7;
 }
@@ -87,7 +88,8 @@ message QuotaLease {
   int64 expires_at_ms = 4; // 默认 10 分钟（spec/22 ACC-08）
 }
 
-// 首次申请、续租与释放（spec/22 ACC-08、ACC-10）。以 (account_id, current_lease_id) 幂等。
+// 首次申请、续租与释放（spec/22 ACC-08、ACC-10）。以 (account_id, current_lease_id, is_release) 幂等。
+// 释放必须引用该节点上最新的 lease_id；控制面结算后回复 QuotaLease{bytes = 0}。
 message LeaseRequest {
   string account_id = 1;
   string current_lease_id = 2; // 首次申请时为空
@@ -114,7 +116,9 @@ message AgentUpgrade {
   string version = 1;
   string url = 2;
   bytes sha256 = 3;
-  bytes signature = 4; // Ed25519，覆盖 sha256
+  // Ed25519 签名，签名输入为 "akari-agent-upgrade-v1" | version | sha256(32)（编码约定见 envelope.proto 文件头），
+  // 把版本号与制品摘要绑定在一起（spec/40 DEP-09）。
+  bytes signature = 4;
   uint32 key_id = 5; // Agent 内置“当前”与“下一把”两个公钥，按 key_id 选择（spec/40 DEP-09）
 }
 

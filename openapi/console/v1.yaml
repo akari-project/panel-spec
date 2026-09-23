@@ -9,7 +9,7 @@ info:
     ## 认证
 
     - 只接受受众（`aud`）为 `console` 的 PASETO v4.public 访问令牌。这种令牌只能由本接口的 `POST /v1/sessions` 签发，且本次登录必须完成二次验证（令牌带 `amr` 声明，spec/10 AUTH-21）。客户端接口签发的令牌、设备授权与扫码登录签发的令牌一律返回 401 `unauthenticated`。
-    - 刷新令牌放在 HttpOnly、Secure、SameSite=Strict 的 Cookie 中，自登录起 12 小时绝对失效、空闲 30 分钟失效；通过 `POST /v1/oauth/token` 轮换。
+    - 浏览器认证与客户端接口的用户中心一致：令牌不出现在响应体中，访问令牌与刷新令牌分别放在 `__Host-access_token`、`__Host-refresh_token` Cookie（HttpOnly、Secure、SameSite=Strict）中。刷新令牌自登录起 12 小时绝对失效、空闲 30 分钟失效，通过 `POST /v1/oauth/token` 轮换。
 
     ## 权限（`x-permission`）
 
@@ -19,7 +19,7 @@ info:
 
     ## 敏感操作（`x-sensitive: true`）
 
-    spec/10 AUTH-19 列出的敏感操作要求：请求体带 `reason`；请求头带 `Mfa-Assertion`（5 分钟内由 `POST /v1/staff/me/step-up` 完成 TOTP 或 Passkey 验证后取得），缺少或过期返回 401 `mfa_required`；界面二次确认（spec/32 UI-03）。执行者还必须拥有 `x-permission` 所列权限。
+    spec/10 AUTH-19 列出的敏感操作要求：请求体带 `reason`（不带请求体的 DELETE 改用请求头 `Audit-Reason`）；请求头带 `Mfa-Assertion`（5 分钟内由 `POST /v1/staff/me/step-up` 完成 TOTP 或 Passkey 验证后取得），缺少或过期返回 401 `mfa_required`；界面二次确认（spec/32 UI-03）。执行者还必须拥有 `x-permission` 所列权限。
 
     ## 通用约定
 
@@ -36,7 +36,7 @@ servers:
 - url: 'https://console.example.invalid'
   description: '独立域名或配置的路径前缀（CON-01）'
 security:
-- bearer: []
+- cookie: []
 tags:
 - name: auth
   description: '管理员登录、令牌与重新验证'
@@ -89,7 +89,7 @@ paths:
         1. 提交邮箱与密码。密码正确时一律返回 401 `mfa_required`，附 `challenge_id` 与 `methods`；管理员尚未绑定 TOTP（首次登录）时另附 `totp_enrollment`（AUTH-22）。非管理员账号返回 403 `forbidden`。
         2. 提交 `challenge_id` 与 `totp_code`、`recovery_code`、`webauthn_assertion` 三者之一，不再提交密码。首次绑定时只接受 `totp_code`，成功后响应附 10 个恢复码。
 
-        成功时签发受众为 `console` 的访问令牌；刷新令牌通过 `Set-Cookie` 下发（HttpOnly、Secure、SameSite=Strict，12 小时绝对失效、空闲 30 分钟失效）。每个 challenge 最多尝试 5 次，失败次数计入 AUTH-09 的登录限流。
+        成功时签发受众为 `console` 的访问令牌。令牌不出现在响应体中：访问令牌与刷新令牌分别以 `__Host-access_token`、`__Host-refresh_token` Cookie（HttpOnly、Secure、SameSite=Strict，Path=/）下发；刷新令牌 12 小时绝对失效、空闲 30 分钟失效（AUTH-21）。每个 challenge 最多尝试 5 次，失败次数计入 AUTH-09 的登录限流。
       security: []
       x-permission: none
       requestBody:
@@ -119,10 +119,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/ConsoleSession'
               example:
-                access_token: v4.public.eyJhdWQiOiJjb25zb2xlIiwic2lkIjoiMDE5MjdjM2UifQ.c2lnbmF0dXJl
-                token_type: Bearer
-                expires_in: 900
                 session_id: '01927c3e-8a41-7026-9d3e-5f6a7b8c0026'
+                access_expires_at: '2026-09-23T10:30:00+08:00'
+                refresh_expires_at: '2026-09-23T22:15:00+08:00'
                 staff:
                   account_id: '01927c3e-8a41-7003-9d3e-5f6a7b8c0003'
                   email: 'ops@example.com'
@@ -143,9 +142,10 @@ paths:
                   has_passkey: false
           headers:
             Set-Cookie:
-              description: '刷新令牌 Cookie'
+              description: '两个 Cookie：`__Host-access_token`（访问令牌，Max-Age=900）与 `__Host-refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）'
               schema:
                 type: string
+              example: '__Host-access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict'
         '401':
           description: '需要二次验证，或凭据错误'
           content:
@@ -197,11 +197,17 @@ paths:
       - auth
       operationId: deleteCurrentSession
       summary: '登出'
-      description: '吊销当前管理会话，并清除刷新令牌 Cookie。'
+      description: '吊销当前管理会话，并以过期的 Set-Cookie 清除 `__Host-access_token` 与 `__Host-refresh_token`。'
       x-permission: none
       responses:
         '204':
-          description: '已完成'
+          description: '已登出'
+          headers:
+            Set-Cookie:
+              description: '以 Max-Age=0 清除 `__Host-access_token` 与 `__Host-refresh_token`'
+              schema:
+                type: string
+              example: '__Host-access_token=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict'
         '401':
           description: '令牌无效'
           content:
@@ -225,7 +231,7 @@ paths:
       - auth
       operationId: refreshToken
       summary: '刷新访问令牌'
-      description: '只支持 `grant_type=refresh_token`（AUTH-21）。刷新令牌默认从 Cookie 读取，也可以在表单中提交；每次使用即轮换（AUTH-07）。错误按 RFC 6749 §5.2 返回 `application/json`（CONV-16 例外）；`default` 只用于限流、服务不可用等非 OAuth 错误。'
+      description: '只支持 `grant_type=refresh_token`（AUTH-21）。刷新令牌由 `__Host-refresh_token` Cookie 携带，不在表单中提交；每次使用即轮换（AUTH-07），新的访问令牌与刷新令牌同样以 Set-Cookie 下发，不出现在响应体中。错误按 RFC 6749 §5.2 返回 `application/json`（CONV-16 例外）；`default` 只用于限流、服务不可用等非 OAuth 错误。'
       security: []
       x-permission: none
       requestBody:
@@ -241,25 +247,31 @@ paths:
                   type: string
                   enum:
                   - refresh_token
-                refresh_token:
-                  type: string
-                  description: '省略时读取 Cookie'
+              additionalProperties: false
+            example:
+              grant_type: refresh_token
       responses:
         '200':
-          description: '新的访问令牌；新的刷新令牌通过 Set-Cookie 下发'
+          description: '已轮换'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthToken'
+                $ref: '#/components/schemas/SessionRefresh'
               example:
-                access_token: v4.public.eyJhdWQiOiJjb25zb2xlIiwic2lkIjoiMDE5MjdjM2UiLCJyIjoxfQ.c2lnbmF0dXJl
-                token_type: Bearer
-                expires_in: 900
+                session_id: '01927c3e-8a41-7026-9d3e-5f6a7b8c0026'
+                access_expires_at: '2026-09-23T10:30:00+08:00'
+                refresh_expires_at: '2026-09-23T21:00:00+08:00'
           headers:
             Set-Cookie:
-              description: '轮换后的刷新令牌 Cookie'
+              description: '两个 Cookie：`__Host-access_token`（访问令牌，Max-Age=900）与 `__Host-refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）'
               schema:
                 type: string
+              example: '__Host-access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict'
+            Cache-Control:
+              description: '`no-store`（RFC 6749 §5.1）'
+              schema:
+                type: string
+              example: no-store
         '400':
           description: 'OAuth 错误'
           content:
@@ -332,6 +344,24 @@ paths:
               example:
                 mfa_assertion: v4.public.eyJwdXJwb3NlIjoic3RlcF91cCJ9.c2ln
                 expires_at: '2026-09-23T10:20:00+08:00'
+        '400':
+          description: '验证失败'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                incorrect:
+                  summary: '验证码错误'
+                  value:
+                    type: 'https://docs.example.invalid/problems/invalid_request'
+                    title: '参数错误'
+                    status: 400
+                    code: invalid_request
+                    request_id: '01927c3f-0b12-7c55-8d10-2f3e4a5b6c7d'
+                    errors:
+                    - field: totp_code
+                      code: incorrect
         '429':
           $ref: '#/components/responses/RateLimited'
         default:
@@ -468,7 +498,7 @@ paths:
       - accounts
       operationId: createAccount
       summary: '创建账号'
-      description: '由管理员代为创建账号。邮箱已存在返回 409 `conflict`。'
+      description: '由管理员代为创建账号。邮箱已被占用返回 400 `invalid_request`，`errors[].code` 为 `taken`。'
       x-permission: accounts.adjust
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
@@ -522,6 +552,24 @@ paths:
                   bytes_up: 100663296
                   bytes_down: 1288490188
                 updated_at: '2026-09-20T18:22:05+08:00'
+        '400':
+          description: '参数错误'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                taken:
+                  summary: '邮箱已被占用'
+                  value:
+                    type: 'https://docs.example.invalid/problems/invalid_request'
+                    title: '参数错误'
+                    status: 400
+                    code: invalid_request
+                    request_id: '01927c3f-0b12-7c55-8d10-2f3e4a5b6c7d'
+                    errors:
+                    - field: email
+                      code: taken
         default:
           $ref: '#/components/responses/Problem'
   '/v1/accounts/{id}':
@@ -650,8 +698,12 @@ paths:
       - accounts
       operationId: deleteAccount
       summary: '发起注销'
-      description: '账号进入 `deleting`，后续处理同 AUTH-05：吊销会话与代理凭据、结束权益、余额作废，30 天后删除个人数据。持有管理员角色、存在未完成订单时返回 409 `invalid_state`。'
+      description: |-
+        账号进入 `deleting`，后续处理同 AUTH-05：吊销会话与代理凭据、结束权益、余额作废，30 天后删除个人数据。持有管理员角色、存在未完成订单时返回 409 `invalid_state`。
+
+        敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
       x-permission: accounts.adjust
+      x-sensitive: true
       parameters:
       - name: id
         in: path
@@ -660,14 +712,8 @@ paths:
         schema:
           type: string
           format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReasonBody'
-            example:
-              reason: '用户通过工单 TCK-20260921-P3LX8C 申请注销'
+      - $ref: '#/components/parameters/AuditReason'
+      - $ref: '#/components/parameters/MfaAssertion'
       responses:
         '202':
           description: '已进入注销'
@@ -780,7 +826,10 @@ paths:
       - accounts
       operationId: resumeAccount
       summary: '恢复账号'
-      description: '恢复后用户需重新登录，代理凭据重新生成（AUTH-25）。'
+      description: |-
+        恢复后用户需重新登录，代理凭据重新生成（AUTH-25）。
+
+        原因放在请求头 `Audit-Reason` 中，缺少返回 400 `invalid_request`（AUTH-25）。
       x-permission: accounts.adjust
       parameters:
       - name: id
@@ -790,14 +839,7 @@ paths:
         schema:
           type: string
           format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReasonBody'
-            example:
-              reason: '用户承诺不再共享，解除暂停'
+      - $ref: '#/components/parameters/AuditReason'
       responses:
         '200':
           description: '已恢复'
@@ -1042,7 +1084,7 @@ paths:
       description: |-
         向用户邮箱发送一次性重置链接（30 分钟有效，AUTH-04），并立即吊销该账号的全部会话。管理员看不到链接与新密码。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: accounts.adjust
       x-sensitive: true
       parameters:
@@ -1135,7 +1177,7 @@ paths:
       description: |-
         异步导出该账号的个人数据（账号资料、设备、订单、权益、余额流水、工单），不含密码哈希、令牌与代理凭据（CONV-24）。下载方式与审计日志导出一致：任务完成后从 `download_path` 下载，文件保留期满后返回 404。导出本身写入审计日志。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: accounts.adjust
       x-sensitive: true
       parameters:
@@ -1880,7 +1922,7 @@ paths:
       description: |-
         写入一条原因为 `admin_adjust` 的余额流水（ORD-11）。扣减后余额小于 0 时返回 409 `invalid_state`。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: credits.adjust
       x-sensitive: true
       parameters:
@@ -2384,7 +2426,7 @@ paths:
       description: |-
         持有该套餐的用户立即失去该线路组节点的访问（BIL-04），写入 `plan.access_changed` 事件；执行前应调用 `POST /v1/plans/{id}/impact` 显示受影响人数。未关联时返回 404。`If-Match` 使用套餐的 ETag。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
 
         必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
       x-permission: 'plans.*'
@@ -2404,16 +2446,9 @@ paths:
         schema:
           type: string
           format: uuid
+      - $ref: '#/components/parameters/AuditReason'
       - $ref: '#/components/parameters/MfaAssertion'
       - $ref: '#/components/parameters/IfMatch'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReasonBody'
-            example:
-              reason: '日本线路组并入亚太标准，移除旧组'
       responses:
         '200':
           description: '已移除'
@@ -2815,7 +2850,7 @@ paths:
       description: |-
         把套餐当前的所选字段写入全部生效中权益的快照（BIL-02），每个权益追加一条 `admin_adjust` 事件，由 worker 异步执行。`expected_affected_account_count` 与执行时不一致返回 409 `conflict`。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: 'plans.*'
       x-sensitive: true
       parameters:
@@ -3598,12 +3633,13 @@ paths:
                     - tuic
                     - anytls
                     experimental_protocols: []
-                    transports:
+                    stable_transports:
                     - tcp
                     - ws
                     - grpc
                     - httpupgrade
                     - quic
+                    experimental_transports: []
                   - kernel: xray
                     version: '26.8.1'
                     stable_protocols:
@@ -3613,13 +3649,14 @@ paths:
                     - shadowsocks
                     experimental_protocols:
                     - hysteria2
-                    transports:
+                    stable_transports:
                     - tcp
                     - ws
                     - grpc
                     - httpupgrade
                     - xhttp
                     - mkcp
+                    experimental_transports:
                     - quic
                   config_version: 1842
                   applied_config_version: 1842
@@ -3661,10 +3698,8 @@ paths:
       - hosts
       operationId: createHost
       summary: '节点建档'
-      description: '建档并生成一次性接入令牌（24 小时有效，只存哈希，NODE-01）。令牌明文与安装命令只在本次响应中返回。'
+      description: '建档并生成一次性接入令牌（24 小时有效，只存哈希，NODE-01）。令牌明文与安装命令只在本次响应中返回。本接口不接受 `Idempotency-Key`（CONV-12）：响应丢失时，用 `POST /v1/hosts/{id}/enrollment-tokens` 重新签发。'
       x-permission: 'hosts.*'
-      parameters:
-      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -3767,12 +3802,13 @@ paths:
                   - tuic
                   - anytls
                   experimental_protocols: []
-                  transports:
+                  stable_transports:
                   - tcp
                   - ws
                   - grpc
                   - httpupgrade
                   - quic
+                  experimental_transports: []
                 - kernel: xray
                   version: '26.8.1'
                   stable_protocols:
@@ -3782,13 +3818,14 @@ paths:
                   - shadowsocks
                   experimental_protocols:
                   - hysteria2
-                  transports:
+                  stable_transports:
                   - tcp
                   - ws
                   - grpc
                   - httpupgrade
                   - xhttp
                   - mkcp
+                  experimental_transports:
                   - quic
                 config_version: 1842
                 applied_config_version: 1842
@@ -3869,12 +3906,13 @@ paths:
                   - tuic
                   - anytls
                   experimental_protocols: []
-                  transports:
+                  stable_transports:
                   - tcp
                   - ws
                   - grpc
                   - httpupgrade
                   - quic
+                  experimental_transports: []
                 - kernel: xray
                   version: '26.8.1'
                   stable_protocols:
@@ -3884,13 +3922,14 @@ paths:
                   - shadowsocks
                   experimental_protocols:
                   - hysteria2
-                  transports:
+                  stable_transports:
                   - tcp
                   - ws
                   - grpc
                   - httpupgrade
                   - xhttp
                   - mkcp
+                  experimental_transports:
                   - quic
                 config_version: 1842
                 applied_config_version: 1842
@@ -3990,7 +4029,7 @@ paths:
       - hosts
       operationId: createEnrollmentToken
       summary: '重新签发接入令牌'
-      description: '签发新的一次性接入令牌（24 小时有效），旧的未使用令牌作废。保留节点 ID、线路组、入站与路由；新 Agent 接入后按 NODE-03 轮换节点密钥。令牌明文只在本次响应中返回。'
+      description: '签发新的一次性接入令牌（24 小时有效），旧的未使用令牌作废。保留节点 ID、线路组、入站与路由；新 Agent 接入后按 NODE-03 轮换节点密钥。令牌明文只在本次响应中返回。本接口的响应含只返回一次的秘密值，不接受 `Idempotency-Key`（CONV-12）；响应丢失时重新签发即可，旧令牌随之作废。'
       x-permission: 'hosts.*'
       parameters:
       - name: id
@@ -4000,7 +4039,6 @@ paths:
         schema:
           type: string
           format: uuid
-      - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
           description: Created
@@ -4025,7 +4063,7 @@ paths:
       description: |-
         节点失陷时使用（NODE-19）：在同一事务中清空当前与上一把节点密钥，节点状态回到 `pending_enroll`，立即关闭该节点的全部会话。重新接入必须签发新的接入令牌。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: 'hosts.*'
       x-sensitive: true
       parameters:
@@ -4104,17 +4142,20 @@ paths:
                   transport: tcp
                   listen_port: 443
                   settings:
-                    flow: xtls-rprx-vision
+                    transport: tcp
                     security: reality
+                    flow: xtls-rprx-vision
                     reality:
-                      dest: 'www.microsoft.com:443'
-                      sni:
-                      - www.microsoft.com
+                      public_key: '6xQP4ob0T5O-7PTjhDoRsoePEc-uYvPUanPWUITGiLI'
+                      short_ids:
+                      - ''
+                      - '6ba85179e30d4fc2'
+                      handshake_address: www.example.org
+                      handshake_port: 443
+                      sni_names:
+                      - www.example.org
                   is_enabled: true
                   has_secrets: true
-                  reality_public_key: Zl3o7mS0cVqPq3bJ4yN2w8kR5tXhA1uD9eG6fB0iK2s
-                  reality_short_ids:
-                  - '6ba85179e30d4fc2'
                   is_available: true
                   health:
                     is_listening: true
@@ -4130,11 +4171,18 @@ paths:
                   transport: quic
                   listen_port: 8443
                   settings:
+                    transport: quic
+                    tls:
+                      sni: hk01.edge.example.net
+                      alpn:
+                      - h3
+                      cert_mode: acme_dns
                     congestion_control: bbr
+                    auth_timeout_ms: 3000
+                    heartbeat_ms: 10000
+                    is_zero_rtt_enabled: false
                   is_enabled: true
                   has_secrets: false
-                  reality_public_key: null
-                  reality_short_ids: []
                   is_available: true
                   health:
                     is_listening: true
@@ -4152,7 +4200,7 @@ paths:
       - hosts
       operationId: createHostInbound
       summary: '添加入站'
-      description: '保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，不通过返回 400 `invalid_request`；端口冲突返回 400，`errors[].code` 为 `not_allowed`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。'
+      description: '`settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时由控制面生成密钥对，响应中返回公钥。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。'
       x-permission: 'hosts.*'
       parameters:
       - name: id
@@ -4174,12 +4222,17 @@ paths:
               transport: tcp
               listen_port: 443
               settings:
-                flow: xtls-rprx-vision
+                transport: tcp
                 security: reality
+                flow: xtls-rprx-vision
                 reality:
-                  dest: 'www.microsoft.com:443'
-                  sni:
-                  - www.microsoft.com
+                  short_ids:
+                  - ''
+                  - '6ba85179e30d4fc2'
+                  handshake_address: www.example.org
+                  handshake_port: 443
+                  sni_names:
+                  - www.example.org
               reality_key_action: generate
       responses:
         '201':
@@ -4195,17 +4248,20 @@ paths:
                 transport: tcp
                 listen_port: 443
                 settings:
-                  flow: xtls-rprx-vision
+                  transport: tcp
                   security: reality
+                  flow: xtls-rprx-vision
                   reality:
-                    dest: 'www.microsoft.com:443'
-                    sni:
-                    - www.microsoft.com
+                    public_key: '6xQP4ob0T5O-7PTjhDoRsoePEc-uYvPUanPWUITGiLI'
+                    short_ids:
+                    - ''
+                    - '6ba85179e30d4fc2'
+                    handshake_address: www.example.org
+                    handshake_port: 443
+                    sni_names:
+                    - www.example.org
                 is_enabled: true
                 has_secrets: true
-                reality_public_key: Zl3o7mS0cVqPq3bJ4yN2w8kR5tXhA1uD9eG6fB0iK2s
-                reality_short_ids:
-                - '6ba85179e30d4fc2'
                 is_available: true
                 health:
                   is_listening: true
@@ -4280,17 +4336,20 @@ paths:
                 transport: tcp
                 listen_port: 443
                 settings:
-                  flow: xtls-rprx-vision
+                  transport: tcp
                   security: reality
+                  flow: xtls-rprx-vision
                   reality:
-                    dest: 'www.microsoft.com:443'
-                    sni:
-                    - www.microsoft.com
+                    public_key: '6xQP4ob0T5O-7PTjhDoRsoePEc-uYvPUanPWUITGiLI'
+                    short_ids:
+                    - ''
+                    - '6ba85179e30d4fc2'
+                    handshake_address: www.example.org
+                    handshake_port: 443
+                    sni_names:
+                    - www.example.org
                 is_enabled: true
                 has_secrets: true
-                reality_public_key: Zl3o7mS0cVqPq3bJ4yN2w8kR5tXhA1uD9eG6fB0iK2s
-                reality_short_ids:
-                - '6ba85179e30d4fc2'
                 is_available: true
                 health:
                   is_listening: true
@@ -4313,7 +4372,7 @@ paths:
       operationId: updateHostInbound
       summary: '修改入站'
       description: |-
-        保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，不通过返回 400 `invalid_request`；端口冲突返回 400，`errors[].code` 为 `not_allowed`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
+        `settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时由控制面生成密钥对，响应中返回公钥。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
 
         必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
       x-permission: 'hosts.*'
@@ -4355,17 +4414,20 @@ paths:
                 transport: tcp
                 listen_port: 8443
                 settings:
-                  flow: xtls-rprx-vision
+                  transport: tcp
                   security: reality
+                  flow: xtls-rprx-vision
                   reality:
-                    dest: 'www.microsoft.com:443'
-                    sni:
-                    - www.microsoft.com
+                    public_key: '6xQP4ob0T5O-7PTjhDoRsoePEc-uYvPUanPWUITGiLI'
+                    short_ids:
+                    - ''
+                    - '6ba85179e30d4fc2'
+                    handshake_address: www.example.org
+                    handshake_port: 443
+                    sni_names:
+                    - www.example.org
                 is_enabled: true
                 has_secrets: true
-                reality_public_key: Zl3o7mS0cVqPq3bJ4yN2w8kR5tXhA1uD9eG6fB0iK2s
-                reality_short_ids:
-                - '6ba85179e30d4fc2'
                 is_available: true
                 health:
                   is_listening: true
@@ -4820,7 +4882,7 @@ paths:
       description: |-
         设置控制面为该节点选定的内核（AGT-07），随 `InboundApply` 下发；Agent 切换失败时回退并在 `last_switch_error` 中报告。已启用的入站有任一不被目标内核支持时返回 409 `kernel_protocol_unsupported`，并在 `incompatible_inbounds` 中列出；执行前应调用 `POST /v1/hosts/{id}/impact`。`If-Match` 使用 `GET /v1/hosts/{id}/kernel` 返回的 ETag。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
 
         必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
       x-permission: kernels.write
@@ -4954,7 +5016,7 @@ paths:
       - kernels
       operationId: listKernels
       summary: '内核能力矩阵（只读）'
-      description: '基线矩阵与各节点上报的能力（spec/21 21.2）。内核数量固定为少数几个，不分页。'
+      description: '数据库基线矩阵（spec/21 21.2）；各节点上报的能力见节点详情的 `reported_kernels`。内核数量固定为少数几个，不分页。'
       x-permission: 'hosts.*'
       responses:
         '200':
@@ -4999,28 +5061,6 @@ paths:
                     status: stable
                   - transport: quic
                     status: stable
-                  host_reports:
-                  - host_id: '01927c3e-8a41-7010-9d3e-5f6a7b8c0010'
-                    host_name: '香港 01'
-                    report:
-                      kernel: singbox
-                      version: '1.13.2'
-                      stable_protocols:
-                      - vless
-                      - vmess
-                      - trojan
-                      - shadowsocks
-                      - hysteria2
-                      - tuic
-                      - anytls
-                      experimental_protocols: []
-                      transports:
-                      - tcp
-                      - ws
-                      - grpc
-                      - httpupgrade
-                      - quic
-                    reported_at: '2026-09-23T08:00:02+08:00'
         default:
           $ref: '#/components/responses/Problem'
   '/v1/kernels/{name}':
@@ -5072,28 +5112,6 @@ paths:
                   status: stable
                 - transport: quic
                   status: stable
-                host_reports:
-                - host_id: '01927c3e-8a41-7010-9d3e-5f6a7b8c0010'
-                  host_name: '香港 01'
-                  report:
-                    kernel: singbox
-                    version: '1.13.2'
-                    stable_protocols:
-                    - vless
-                    - vmess
-                    - trojan
-                    - shadowsocks
-                    - hysteria2
-                    - tuic
-                    - anytls
-                    experimental_protocols: []
-                    transports:
-                    - tcp
-                    - ws
-                    - grpc
-                    - httpupgrade
-                    - quic
-                  reported_at: '2026-09-23T08:00:02+08:00'
         default:
           $ref: '#/components/responses/Problem'
   /v1/orders:
@@ -5350,7 +5368,7 @@ paths:
       description: |-
         可退金额与原路退回上限见订单的 `refundable_minor`、`refundable_original_minor`（ORD-09）；超出返回 400 `invalid_request`（`errors[].code` 为 `out_of_range`）。同一订单的退款串行执行。成功后写余额流水与 `refund` 权益事件（ORD-10）。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: orders.refund
       x-sensitive: true
       parameters:
@@ -5371,6 +5389,7 @@ paths:
               $ref: '#/components/schemas/RefundCreate'
             example:
               amount_minor: 1250
+              currency: CNY
               destination: original
               reason: '用户所在地区线路长期不可用，按剩余价值退款'
       responses:
@@ -5462,7 +5481,7 @@ paths:
       description: |-
         只有 superadmin 可以执行，任何角色都不能被授予该操作（AUTH-22、ORD-12）。把 `pending`、`expired` 或 `cancelled` 订单标记为已支付（`provider=manual`），在同一事务中写入 `order.paid` 事件，由 worker 按 ORD-05 开通。其他状态返回 409 `invalid_state`。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: superadmin
       x-sensitive: true
       parameters:
@@ -5621,7 +5640,7 @@ paths:
       description: |-
         结算货币不是 CNY 时启用返回 409 `invalid_state`（PAY-03）。`app_private_key` 只写，审计记录中只记“已修改”。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
 
         必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
       x-permission: payments.configure
@@ -5788,7 +5807,8 @@ paths:
                   out_trade_no: ORD-20260920-K7Q2XM
                   trade_no: '2026092022001404561234567890'
                   trade_status: TRADE_SUCCESS
-                  total_amount: '12.50'
+                  amount_minor: 1250
+                  currency: CNY
                   is_verified: true
                   result: processed
                   raw:
@@ -5831,7 +5851,8 @@ paths:
                 out_trade_no: ORD-20260920-K7Q2XM
                 trade_no: '2026092022001404561234567890'
                 trade_status: TRADE_SUCCESS
-                total_amount: '12.50'
+                amount_minor: 1250
+                currency: CNY
                 is_verified: true
                 result: processed
                 raw:
@@ -5908,10 +5929,8 @@ paths:
       - coupons
       operationId: createCoupon
       summary: '创建优惠券'
-      description: '码值只存哈希（ORD-13），明文只在本次响应中返回。码值已存在返回 409 `conflict`。'
+      description: '码值只存哈希（ORD-13），明文只在本次响应中返回，因此不接受 `Idempotency-Key`（CONV-12）。码值已存在返回 400 `invalid_request`，`errors[].code` 为 `taken`。'
       x-permission: 'coupons.*'
-      parameters:
-      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -6217,10 +6236,8 @@ paths:
       - coupons
       operationId: createRedeemCodeBatch
       summary: '生成兑换码批次'
-      description: '码值为 16 位随机字符（去除易混字符），只存哈希（ORD-14）。**明文码只在本次响应中返回一次**（CON-06），`codes_csv` 供界面提供一次性 CSV 下载；此后只能导出使用记录。幂等重放返回 409 `conflict` 而不是再次返回明文。'
+      description: '码值为 16 位随机字符（去除易混字符），只存哈希（ORD-14）。**明文码只在本次响应中返回一次**（CON-06），`codes_csv` 供界面提供一次性 CSV 下载；此后只能导出使用记录。本接口不接受 `Idempotency-Key`（CONV-12）：响应丢失时停用该批次并重新生成。'
       x-permission: 'coupons.*'
-      parameters:
-      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -7189,9 +7206,10 @@ paths:
                   body: '每天 21 点后测速只有 2 Mbps，截图见附件。'
                   attachments:
                   - id: '01927c3e-8a41-701f-9d3e-5f6a7b8c001f'
+                    filename: speedtest.png
                     content_type: image/png
                     bytes_size: 482133
-                    filename: speedtest.png
+                    created_at: '2026-09-21T22:09:40+08:00'
                     download_path: /v1/support/attachments/01927c3e-8a41-701f-9d3e-5f6a7b8c001f
                   created_at: '2026-09-21T22:10:00+08:00'
                 - id: '01927c3e-8a41-701e-9d3e-5f6a7b8c001e'
@@ -7374,9 +7392,10 @@ paths:
                 $ref: '#/components/schemas/Attachment'
               example:
                 id: '01927c3e-8a41-701f-9d3e-5f6a7b8c001f'
+                filename: speedtest.png
                 content_type: image/png
                 bytes_size: 482133
-                filename: speedtest.png
+                created_at: '2026-09-21T22:09:40+08:00'
                 download_path: /v1/support/attachments/01927c3e-8a41-701f-9d3e-5f6a7b8c001f
         default:
           $ref: '#/components/responses/Problem'
@@ -7940,6 +7959,7 @@ paths:
                   rate_bps: 1000
                   scope: first_order
                   cap_minor: 5000
+                  currency: CNY
                   freeze_days: 14
                   burst_threshold: 5
                 is_offline_hosts_listed: true
@@ -8005,6 +8025,7 @@ paths:
                   rate_bps: 1000
                   scope: first_order
                   cap_minor: 5000
+                  currency: CNY
                   freeze_days: 14
                   burst_threshold: 5
                 is_offline_hosts_listed: true
@@ -8135,7 +8156,7 @@ paths:
       description: |-
         只有 superadmin 能分配角色，且不能授予超出自身的权限（AUTH-22）；移除最后一个 superadmin 返回 409 `invalid_state`。变更后吊销该管理员的全部管理会话（AUTH-21）。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: 'staff.*'
       x-sensitive: true
       parameters:
@@ -8201,7 +8222,7 @@ paths:
       description: |-
         移除该账号的全部角色并吊销其管理会话；账号本身保留。移除最后一个 superadmin 返回 409 `invalid_state`。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
       x-permission: 'staff.*'
       x-sensitive: true
       parameters:
@@ -8212,15 +8233,8 @@ paths:
         schema:
           type: string
           format: uuid
+      - $ref: '#/components/parameters/AuditReason'
       - $ref: '#/components/parameters/MfaAssertion'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReasonBody'
-            example:
-              reason: '员工离职'
       responses:
         '204':
           description: '已完成'
@@ -8302,7 +8316,7 @@ paths:
       description: |-
         发送一次性邀请邮件，72 小时有效（AUTH-22）；只有 superadmin 能邀请，且不能授予超出自身的权限。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: 'staff.*'
       x-sensitive: true
       parameters:
@@ -8378,7 +8392,7 @@ paths:
       description: |-
         只能撤销 `pending` 的邀请，否则返回 409 `invalid_state`。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
       x-permission: 'staff.*'
       x-sensitive: true
       parameters:
@@ -8389,15 +8403,8 @@ paths:
         schema:
           type: string
           format: uuid
+      - $ref: '#/components/parameters/AuditReason'
       - $ref: '#/components/parameters/MfaAssertion'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReasonBody'
-            example:
-              reason: '邮箱填写错误'
       responses:
         '204':
           description: '已完成'
@@ -8425,7 +8432,7 @@ paths:
       - staff
       operationId: listRoles
       summary: '角色列表'
-      description: '角色数量少，不分页。'
+      description: '不分页：角色总数上限 100（含 3 个内置角色），超过时创建返回 409 `invalid_state`。'
       x-permission: 'staff.*'
       responses:
         '200':
@@ -8478,7 +8485,7 @@ paths:
       description: |-
         权限必须是 AUTH-17 权限目录的子集，且不超出操作者自身权限；不能包含 `*`，也不能包含手动标记支付（AUTH-22）。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: 'staff.*'
       x-sensitive: true
       parameters:
@@ -8567,7 +8574,7 @@ paths:
       description: |-
         内置角色返回 409 `invalid_state`。变更后吊销持有该角色的管理员的全部管理会话（AUTH-21）。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
 
         必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
       x-permission: 'staff.*'
@@ -8652,7 +8659,7 @@ paths:
       description: |-
         内置角色，或仍有管理员持有的角色，返回 409 `invalid_state`。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
 
         必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
       x-permission: 'staff.*'
@@ -8665,16 +8672,9 @@ paths:
         schema:
           type: string
           pattern: '^[a-z][a-z0-9-]{1,31}$'
+      - $ref: '#/components/parameters/AuditReason'
       - $ref: '#/components/parameters/MfaAssertion'
       - $ref: '#/components/parameters/IfMatch'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReasonBody'
-            example:
-              reason: '财务岗位撤销'
       responses:
         '204':
           description: '已完成'
@@ -8897,7 +8897,7 @@ paths:
       description: |-
         异步生成导出文件（AUTH-18）。导出本身写入审计日志。
 
-        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+        敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
       x-permission: audit.read
       x-sensitive: true
       parameters:
@@ -9043,11 +9043,11 @@ paths:
           $ref: '#/components/responses/Problem'
 components:
   securitySchemes:
-    bearer:
-      type: http
-      scheme: bearer
-      bearerFormat: 'PASETO v4.public'
-      description: '受众为 `console` 的访问令牌（AUTH-21）'
+    cookie:
+      type: apiKey
+      in: cookie
+      name: __Host-access_token
+      description: '受众为 `console` 的 PASETO v4.public 访问令牌（AUTH-21），由 `POST /v1/sessions` 以 HttpOnly、Secure、SameSite=Strict Cookie 下发；刷新令牌 Cookie `__Host-refresh_token` 只用于 `POST /v1/oauth/token`（AUTH-08）'
   parameters:
     Limit:
       name: limit
@@ -9077,8 +9077,8 @@ components:
     IfMatch:
       name: If-Match
       in: header
-      required: true
-      description: '资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。'
+      required: false
+      description: '必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。'
       schema:
         type: string
       example: '"p-4f1c9a2e"'
@@ -9092,10 +9092,20 @@ components:
     MfaAssertion:
       name: Mfa-Assertion
       in: header
-      required: true
-      description: '5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。'
+      required: false
+      description: '敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。'
       schema:
         type: string
+    AuditReason:
+      name: Audit-Reason
+      in: header
+      required: false
+      description: '操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。'
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 4500
+      example: '%E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C'
   headers:
     ETag:
       description: '强 ETag（CONV-13）'
@@ -9175,8 +9185,7 @@ components:
           type: integer
           format: int32
         code:
-          type: string
-          description: '机器可读的错误码，取值见 spec/02 CONV-16'
+          $ref: '#/components/schemas/ProblemCode'
         detail:
           type: string
         request_id:
@@ -9214,18 +9223,50 @@ components:
       properties:
         field:
           type: string
+          description: '字段路径，如 `reality.short_ids`；请求头参数使用请求头名'
         code:
-          type: string
-          enum:
-          - required
-          - invalid_format
-          - too_short
-          - too_long
-          - out_of_range
-          - not_allowed
-          - invalid_code
-          - expired
-          - exhausted
+          $ref: '#/components/schemas/FieldErrorCode'
+    ProblemCode:
+      type: string
+      enum:
+      - invalid_request
+      - unauthenticated
+      - mfa_required
+      - forbidden
+      - email_unverified
+      - registration_closed
+      - account_suspended
+      - not_found
+      - conflict
+      - invalid_state
+      - quote_expired
+      - entitlement_required
+      - device_limit_reached
+      - payment_unavailable
+      - kernel_protocol_unsupported
+      - payload_too_large
+      - idempotency_key_reused
+      - upgrade_required
+      - precondition_required
+      - rate_limited
+      - internal
+      - service_unavailable
+      description: '错误码，取值见 spec/02 CONV-16，与客户端接口相同'
+    FieldErrorCode:
+      type: string
+      enum:
+      - required
+      - invalid_format
+      - too_short
+      - too_long
+      - out_of_range
+      - not_allowed
+      - invalid_code
+      - incorrect
+      - expired
+      - exhausted
+      - taken
+      description: '`errors[].code`，取值见 spec/02 CONV-16；`taken`（取值已被占用）只用于管理接口'
     OAuthError:
       type: object
       description: 'RFC 6749 §5.2 错误响应（CONV-16 的唯一例外）'
@@ -9315,26 +9356,24 @@ components:
           description: 'WebAuthn 断言（M4）'
     ConsoleSession:
       type: object
+      description: '令牌不出现在响应体中，只以 Set-Cookie 下发'
       required:
-      - access_token
-      - token_type
-      - expires_in
       - session_id
+      - access_expires_at
+      - refresh_expires_at
       - staff
       properties:
-        access_token:
-          type: string
-          description: 'PASETO v4.public，受众 `console`，15 分钟有效'
-        token_type:
-          type: string
-          enum:
-          - Bearer
-        expires_in:
-          type: integer
-          format: int32
         session_id:
           type: string
           format: uuid
+        access_expires_at:
+          type: string
+          format: date-time
+          description: '访问令牌（Cookie `__Host-access_token`）的失效时间，15 分钟'
+        refresh_expires_at:
+          type: string
+          format: date-time
+          description: '刷新令牌（Cookie `__Host-refresh_token`）的绝对失效时间，自登录起 12 小时'
         staff:
           $ref: '#/components/schemas/StaffMe'
         recovery_codes:
@@ -9342,22 +9381,24 @@ components:
           items:
             type: string
           description: '本次登录同时完成 TOTP 绑定时返回的 10 个恢复码，只返回一次'
-    OAuthToken:
+    SessionRefresh:
       type: object
+      description: '令牌不出现在响应体中，只以 Set-Cookie 下发'
       required:
-      - access_token
-      - token_type
-      - expires_in
+      - session_id
+      - access_expires_at
+      - refresh_expires_at
       properties:
-        access_token:
+        session_id:
           type: string
-        token_type:
+          format: uuid
+        access_expires_at:
           type: string
-          enum:
-          - Bearer
-        expires_in:
-          type: integer
-          format: int32
+          format: date-time
+        refresh_expires_at:
+          type: string
+          format: date-time
+          description: '绝对失效时间不因轮换而延长'
     StepUpRequest:
       type: object
       description: '提交 TOTP 码或 Passkey 断言之一（恢复码不可用于 step-up）'
@@ -10849,7 +10890,8 @@ components:
       - version
       - stable_protocols
       - experimental_protocols
-      - transports
+      - stable_transports
+      - experimental_transports
       properties:
         kernel:
           $ref: '#/components/schemas/Kernel'
@@ -10879,7 +10921,19 @@ components:
             - hysteria2
             - tuic
             - anytls
-        transports:
+        stable_transports:
+          type: array
+          items:
+            type: string
+            enum:
+            - tcp
+            - ws
+            - grpc
+            - httpupgrade
+            - xhttp
+            - mkcp
+            - quic
+        experimental_transports:
           type: array
           items:
             type: string
@@ -11215,7 +11269,7 @@ components:
           maximum: 65535
         settings:
           type: object
-          description: '按“协议 + 传输”的 JSON Schema 校验（panel-spec/schemas/inbound/，AGT-13）；不含密钥'
+          description: '入站配置，不含密钥。控制面把 `settings` 与 `secrets` 深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13）'
         is_enabled:
           type: boolean
         id:
@@ -11226,15 +11280,7 @@ components:
           format: uuid
         has_secrets:
           type: boolean
-          description: '是否已设置密钥（如 Reality 私钥）；密钥值永不返回'
-        reality_public_key:
-          type:
-          - string
-          - 'null'
-        reality_short_ids:
-          type: array
-          items:
-            type: string
+          description: '是否已设置密钥（如 Reality 私钥、Shadowsocks 2022 主密钥）；密钥值永不返回'
         is_available:
           type: boolean
           description: '能力校验失败时为 false（AGT-09）'
@@ -11290,19 +11336,19 @@ components:
           maximum: 65535
         settings:
           type: object
-          description: '按“协议 + 传输”的 JSON Schema 校验（panel-spec/schemas/inbound/，AGT-13）；不含密钥'
+          description: '入站配置，不含密钥。控制面把 `settings` 与 `secrets` 深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13）'
         is_enabled:
           type: boolean
         secrets:
           type: object
           writeOnly: true
-          description: '只写：密钥类配置，按 CONV-19 加密存储'
+          description: '只写：密钥字段，结构与 settings 中对应位置相同（如 `{"reality": {"private_key": "..."}}`），按 CONV-19 加密存储，永不返回'
         reality_key_action:
           type: string
           enum:
           - keep
           - generate
-          description: '`generate` 由控制面生成 Reality 密钥对与短 ID（NODE-04）'
+          description: '`generate` 由控制面生成 Reality 密钥对（NODE-04）：私钥存入 secrets，公钥写入 `settings.reality.public_key` 并在响应中返回'
     InboundUpdate:
       type: object
       properties:
@@ -11333,17 +11379,19 @@ components:
           maximum: 65535
         settings:
           type: object
-          description: '按“协议 + 传输”的 JSON Schema 校验（panel-spec/schemas/inbound/，AGT-13）；不含密钥'
+          description: '入站配置，不含密钥。控制面把 `settings` 与 `secrets` 深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13）'
         is_enabled:
           type: boolean
         secrets:
           type: object
           writeOnly: true
+          description: '只写：提交时整体替换已保存的密钥；省略表示保留'
         reality_key_action:
           type: string
           enum:
           - keep
           - generate
+          description: '`generate` 重新生成 Reality 密钥对'
       minProperties: 1
     HostRoute:
       type: object
@@ -11481,12 +11529,11 @@ components:
       minProperties: 1
     KernelSupport:
       type: object
-      description: '数据库基线矩阵（kernel_protocols、kernel_transports）与节点上报能力（spec/21 21.2）'
+      description: '数据库基线矩阵（kernel_protocols、kernel_transports，spec/21 21.2）；各节点上报的能力见 `Host.reported_kernels`'
       required:
       - name
       - protocols
       - transports
-      - host_reports
       properties:
         name:
           $ref: '#/components/schemas/Kernel'
@@ -11536,27 +11583,6 @@ components:
                 enum:
                 - stable
                 - experimental
-        host_reports:
-          type: array
-          items:
-            type: object
-            required:
-            - host_id
-            - host_name
-            - report
-            - reported_at
-            properties:
-              host_id:
-                type: string
-                format: uuid
-              host_name:
-                type: string
-              report:
-                $ref: '#/components/schemas/KernelReport'
-              reported_at:
-                type: string
-                format: date-time
-          description: '各节点最近上报的该内核能力'
     Order:
       type: object
       required:
@@ -11739,6 +11765,7 @@ components:
       type: object
       required:
       - amount_minor
+      - currency
       - destination
       - reason
       properties:
@@ -11746,6 +11773,10 @@ components:
           type: integer
           format: int64
           minimum: 1
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: '必须等于订单币种'
         destination:
           type: string
           enum:
@@ -11980,10 +12011,18 @@ components:
           type:
           - string
           - 'null'
-        total_amount:
+        amount_minor:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: '通知金额换算为最小货币单位；原值只保留在 `raw` 中'
+        currency:
           type:
           - string
           - 'null'
+          pattern: '^[A-Z]{3}$'
+          description: 'ISO 4217 货币代码（CONV-05）'
         is_verified:
           type: boolean
         result:
@@ -12699,16 +12738,19 @@ components:
       minProperties: 1
     Attachment:
       type: object
+      description: '与客户端接口的附件对象相同，另加 `download_path`'
       required:
       - id
+      - filename
       - content_type
       - bytes_size
-      - filename
-      - download_path
+      - created_at
       properties:
         id:
           type: string
           format: uuid
+        filename:
+          type: string
         content_type:
           type: string
           enum:
@@ -12717,11 +12759,14 @@ components:
           - image/webp
         bytes_size:
           type: integer
+          minimum: 1
           maximum: 5242880
-        filename:
+        created_at:
           type: string
+          format: date-time
         download_path:
           type: string
+          description: '管理接口附加字段：下载路径'
     TicketMessage:
       type: object
       required:
@@ -13056,6 +13101,12 @@ components:
               - integer
               - 'null'
               format: int64
+              description: '单人返利上限；为空表示不限'
+            currency:
+              type: string
+              pattern: '^[A-Z]{3}$'
+              description: '等于站点结算货币'
+              readOnly: true
             freeze_days:
               type: integer
               minimum: 0
@@ -13162,6 +13213,12 @@ components:
               - integer
               - 'null'
               format: int64
+              description: '单人返利上限；为空表示不限'
+            currency:
+              type: string
+              pattern: '^[A-Z]{3}$'
+              description: '等于站点结算货币'
+              readOnly: true
             freeze_days:
               type: integer
               minimum: 0

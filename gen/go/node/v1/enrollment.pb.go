@@ -37,7 +37,7 @@ type EnrollRequest struct {
 	EnrollToken     string                 `protobuf:"bytes,1,opt,name=enroll_token,json=enrollToken,proto3" json:"enroll_token,omitempty"` // 一次性接入令牌（spec/20 NODE-01）
 	Host            *HostInfo              `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`
 	CapabilitiesRaw []byte                 `protobuf:"bytes,3,opt,name=capabilities_raw,json=capabilitiesRaw,proto3" json:"capabilities_raw,omitempty"` // 序列化后的 Capabilities
-	// 主机指纹：SHA-256(机器 ID | 本地生成并持久化的随机数)，十六进制。
+	// 主机指纹：SHA-256(机器 ID || 本地生成并持久化的 32 字节随机数) 的小写十六进制；控制面只做不透明比较。
 	// 首次成功后 10 分钟内，以同一令牌与同一指纹重复提交，返回相同结果（spec/20 NODE-02）。
 	HostFingerprint string `protobuf:"bytes,4,opt,name=host_fingerprint,json=hostFingerprint,proto3" json:"host_fingerprint,omitempty"`
 	unknownFields   protoimpl.UnknownFields

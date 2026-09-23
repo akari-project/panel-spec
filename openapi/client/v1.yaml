@@ -1975,12 +1975,12 @@ paths:
                 value:
                   price_id: 0192f0c4-1b00-7000-8000-00000000b001
                   coupon_code: AUTUMN10
-                  use_credit: true
+                  is_credit_applied: true
               addon:
                 summary: 加购项
                 value:
                   addon_price_id: 0192f0c4-1c00-7000-8000-00000000c001
-                  use_credit: false
+                  is_credit_applied: false
       responses:
         '201':
           description: 报价
@@ -2692,8 +2692,9 @@ paths:
                   body: 订单 ORD-20261001-P3ZG7K 已在支付宝付款，页面仍显示待支付。
                   attachments:
                   - id: 0192f0c4-cc00-7000-8000-0000000d0001
+                    filename: alipay-receipt.png
                     content_type: image/png
-                    size_bytes: 184320
+                    bytes_size: 184320
                     created_at: '2026-10-01T10:09:30+08:00'
                   created_at: '2026-10-01T10:10:00+08:00'
         '400':
@@ -2839,8 +2840,9 @@ paths:
                 $ref: '#/components/schemas/Attachment'
               example:
                 id: 0192f0c4-cc00-7000-8000-0000000d0001
+                filename: alipay-receipt.png
                 content_type: image/png
-                size_bytes: 184320
+                bytes_size: 184320
                 created_at: '2026-10-01T10:09:30+08:00'
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -2875,7 +2877,7 @@ paths:
               description: 恒为 `attachment`
               schema:
                 type: string
-              example: attachment; filename="0192f0c4-cc00-7000-8000-0000000d0001.png"
+              example: attachment; filename="alipay-receipt.png"
             X-Content-Type-Options:
               description: 恒为 `nosniff`
               schema:
@@ -3542,6 +3544,7 @@ components:
       - incorrect
       - expired
       - exhausted
+      - taken
     OAuthErrorBody:
       type: object
       required: [error]
@@ -3843,7 +3846,7 @@ components:
               format: int64
             features:
               type: object
-              description: 运营模块开关（OPS-08）
+              description: 运营模块开关（OPS-08）。键名由 spec/13 OPS-08 规定，是 CONV-10 布尔字段须以 `is_`/`has_` 开头的例外。
               required: [announcements, articles, support, referrals, diagnostics]
               properties:
                 announcements:
@@ -4331,9 +4334,10 @@ components:
           coupon_code:
             type: string
             maxLength: 64
-          use_credit:
+          is_credit_applied:
             type: boolean
             default: true
+            description: 是否用余额抵扣（预估额见 `Quote.credit_applied_minor`，以下单时冻结为准，ORD-15）
       - type: object
         title: 加购项
         additionalProperties: false
@@ -4345,9 +4349,10 @@ components:
           coupon_code:
             type: string
             maxLength: 64
-          use_credit:
+          is_credit_applied:
             type: boolean
             default: true
+            description: 是否用余额抵扣（预估额见 `Quote.credit_applied_minor`，以下单时冻结为准，ORD-15）
     OrderType:
       type: string
       description: 购买场景（ORD-01）
@@ -4738,17 +4743,25 @@ components:
           format: date-time
     Attachment:
       type: object
-      required: [id, content_type, size_bytes, created_at]
+      required: [id, filename, content_type, bytes_size, created_at]
       properties:
         id:
           type: string
           format: uuid
+        filename:
+          type: string
+          maxLength: 255
+          description: 上传时 multipart 分段的文件名（已去除路径与控制字符）；下载时用于 `Content-Disposition`
         content_type:
           type: string
           enum: [image/png, image/jpeg, image/webp]
-        size_bytes:
+          description: 按文件内容识别的类型（OPS-10）
+        bytes_size:
           type: integer
+          format: int64
+          minimum: 1
           maximum: 5242880
+          description: 文件字节数
         created_at:
           type: string
           format: date-time

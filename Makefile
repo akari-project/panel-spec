@@ -100,12 +100,20 @@ licenses:
 
 breaking: breaking-proto breaking-openapi
 
-breaking-proto:
-	buf breaking --against '$(BREAKING_AGAINST)'
+# 基准为 HEAD 之前的最近一个 tag（在 tag 提交上构建时也不会与自己比较）；
+# 还没有任何 tag 时退回 BREAKING_AGAINST（默认 main 分支）。
+PREV_TAG = $(shell git describe --tags --abbrev=0 HEAD^ 2>/dev/null)
 
-# 与上一个 tag 对比；没有 tag，或该 tag 中没有对应文件时跳过。
+breaking-proto:
+	@if [ -n "$(PREV_TAG)" ]; then \
+	  echo "breaking-proto: 对比 $(PREV_TAG)"; buf breaking --against '.git#tag=$(PREV_TAG)'; \
+	else \
+	  echo "breaking-proto: 没有更早的 tag，对比 $(BREAKING_AGAINST)"; buf breaking --against '$(BREAKING_AGAINST)'; \
+	fi
+
+# 与 HEAD 之前的最近一个 tag 对比；没有 tag，或该 tag 中没有对应文件时跳过。
 breaking-openapi:
-	@tag="$$(git describe --tags --abbrev=0 2>/dev/null || true)"; \
+	@tag="$(PREV_TAG)"; \
 	if [ -z "$$tag" ]; then echo "breaking-openapi: 没有 tag，跳过 oasdiff"; exit 0; fi; \
 	tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
 	for f in $(OPENAPI_FILES); do \

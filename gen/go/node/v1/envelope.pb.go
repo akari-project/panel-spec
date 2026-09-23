@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // 控制面与 node-agent 之间的传输信封。语义见 spec/20-node-protocol.md。
 //
-// 编码约定（适用于本文件中所有 MAC、密钥派生与附加数据）：
-//   - 整数为大端定长（字段后括号内为字节数）；
-//   - 字符串与字节串前置 4 字节大端长度；
-//   - “|” 表示按顺序拼接；
+// 编码约定（适用于 proto/node/v1 下所有文件中的 MAC、签名、密钥派生与附加数据）：
+//   - “A | B”：带长度前缀的拼接，只用于 MAC 与签名的输入。
+//       字符串与字节串编码为 4 字节大端长度 + 原始字节；
+//       整数编码为大端定长，字节数写在括号内，如 ts_ms(8)，不加长度前缀。
+//   - “A || B”：原始拼接，不加任何前缀，用于 HKDF info、附加数据与密文布局。
+//   - “x(n)”：出现在 || 中时，表示 n 字节的定长原始字节。
+//   - 字符串一律为 UTF-8 字节。
+//   - node_id 的文本形式为 RFC 9562 规范的小写 UUID，例如 0192f000-0000-7000-8000-000000000001；
+//     二进制形式为其 16 字节。控制面计算 HelloAck MAC 时使用 Hello 中收到的原文。
 //   - 需要覆盖嵌套消息时，一律对“收到的原始字节”取 SHA-256，接收方不重新序列化（spec/20 20.3）。
 // 测试向量见 testdata/node-v1-vectors.json，由 tools/vectors 生成。
 
@@ -42,7 +47,8 @@ type Frame struct {
 	//	*Frame_Sealed
 	//	*Frame_HelloReject
 	Kind isFrame_Kind `protobuf_oneof:"kind"`
-	// 会话内每个方向从 1 开始递增；重复或不递增即关闭连接（spec/20 NODE-12）。
+	// 握手帧（hello、hello_ack、hello_reject）为 0。之后会话内每个方向从 1 开始递增；
+	// 重复或不递增即关闭连接（spec/20 NODE-12）。
 	Seq           uint64 `protobuf:"varint,4,opt,name=seq,proto3" json:"seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -145,7 +151,7 @@ type Frame_Sealed struct {
 	// 明文为序列化后的 Envelope。
 	// 附加数据 = direction(1) || seq(8)，direction：Agent → 控制面为 0x01，控制面 → Agent 为 0x02。
 	// 密钥：K = HKDF-SHA256(ikm = X25519(本方临时私钥, 对方临时公钥), salt = Hello.nonce,
-	//   info = "akari-node-session-v1" | node_id(16，UUID 的二进制形式) | Hello.ephemeral_pubkey(32) | HelloAck.ephemeral_pubkey(32),
+	//   info = "akari-node-session-v1" || node_id(16，二进制形式) || Hello.ephemeral_pubkey(32) || HelloAck.ephemeral_pubkey(32),
 	//   L = 64)。K[0:32] 用于 Agent → 控制面，K[32:64] 用于控制面 → Agent。
 	// nonce 不得由 seq 派生（spec/20 NODE-11）。
 	Sealed []byte `protobuf:"bytes,3,opt,name=sealed,proto3,oneof"`
@@ -165,7 +171,7 @@ func (*Frame_HelloReject) isFrame_Kind() {}
 
 type Hello struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	NodeId          string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // UUID 文本形式
+	NodeId          string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // 小写 UUID 文本形式（见文件头）
 	TsMs            int64                  `protobuf:"varint,2,opt,name=ts_ms,json=tsMs,proto3" json:"ts_ms,omitempty"`
 	Nonce           []byte                 `protobuf:"bytes,3,opt,name=nonce,proto3" json:"nonce,omitempty"` // 16 字节随机数
 	ProtoVersion    uint32                 `protobuf:"varint,4,opt,name=proto_version,json=protoVersion,proto3" json:"proto_version,omitempty"`
@@ -626,7 +632,6 @@ type ControlPlaneCapabilities struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	PanelVersion         string                 `protobuf:"bytes,1,opt,name=panel_version,json=panelVersion,proto3" json:"panel_version,omitempty"`
 	SupportsLeaseRelease bool                   `protobuf:"varint,2,opt,name=supports_lease_release,json=supportsLeaseRelease,proto3" json:"supports_lease_release,omitempty"` // 接受 LeaseRequest.is_release
-	SupportsSourceSet    bool                   `protobuf:"varint,3,opt,name=supports_source_set,json=supportsSourceSet,proto3" json:"supports_source_set,omitempty"`          // 会下发 SourceSet
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -671,13 +676,6 @@ func (x *ControlPlaneCapabilities) GetPanelVersion() string {
 func (x *ControlPlaneCapabilities) GetSupportsLeaseRelease() bool {
 	if x != nil {
 		return x.SupportsLeaseRelease
-	}
-	return false
-}
-
-func (x *ControlPlaneCapabilities) GetSupportsSourceSet() bool {
-	if x != nil {
-		return x.SupportsSourceSet
 	}
 	return false
 }
@@ -1053,11 +1051,10 @@ const file_node_v1_envelope_proto_rawDesc = "" +
 	"\x10stable_protocols\x18\x03 \x03(\x0e2\x11.node.v1.ProtocolR\x0fstableProtocols\x12H\n" +
 	"\x16experimental_protocols\x18\x04 \x03(\x0e2\x11.node.v1.ProtocolR\x15experimentalProtocols\x12?\n" +
 	"\x11stable_transports\x18\x05 \x03(\x0e2\x12.node.v1.TransportR\x10stableTransports\x12K\n" +
-	"\x17experimental_transports\x18\x06 \x03(\x0e2\x12.node.v1.TransportR\x16experimentalTransports\"\xa5\x01\n" +
+	"\x17experimental_transports\x18\x06 \x03(\x0e2\x12.node.v1.TransportR\x16experimentalTransports\"\x90\x01\n" +
 	"\x18ControlPlaneCapabilities\x12#\n" +
 	"\rpanel_version\x18\x01 \x01(\tR\fpanelVersion\x124\n" +
-	"\x16supports_lease_release\x18\x02 \x01(\bR\x14supportsLeaseRelease\x12.\n" +
-	"\x13supports_source_set\x18\x03 \x01(\bR\x11supportsSourceSet\"\xb7\x06\n" +
+	"\x16supports_lease_release\x18\x02 \x01(\bR\x14supportsLeaseReleaseJ\x04\b\x03\x10\x04R\x13supports_source_set\"\xb7\x06\n" +
 	"\bEnvelope\x12\x10\n" +
 	"\x03ack\x18\x01 \x01(\x04R\x03ack\x12\x13\n" +
 	"\x05ts_ms\x18\x02 \x01(\x03R\x04tsMs\x12\x19\n" +

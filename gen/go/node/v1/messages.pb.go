@@ -260,8 +260,9 @@ type Snapshot struct {
 	Inbounds    []*Inbound    `protobuf:"bytes,3,rep,name=inbounds,proto3" json:"inbounds,omitempty"`
 	Credentials []*Credential `protobuf:"bytes,4,rep,name=credentials,proto3" json:"credentials,omitempty"`
 	RoutesJson  []byte        `protobuf:"bytes,5,opt,name=routes_json,json=routesJson,proto3" json:"routes_json,omitempty"`
-	// 以 K_dns = HKDF-SHA256(ikm = PSK, info = "akari-dns-secret-v1", L = 32) 做 XChaCha20-Poly1305 加密：
-	// nonce(24) || 密文与 tag（spec/20 NODE-25）。
+	// 以 K_dns = HKDF-SHA256(ikm = PSK, salt = 空（等价于 32 个零字节）, info = "akari-dns-secret-v1", L = 32)
+	// 做 XChaCha20-Poly1305 加密，附加数据为空：nonce(24) || 密文与 tag（spec/20 NODE-25）。
+	// PSK 取当前会话通过验证的那一把；重新接入的过渡期结束、或 PSK 变化后，控制面用新 PSK 重新加密下发。
 	DnsProviderSecret []byte         `protobuf:"bytes,6,opt,name=dns_provider_secret,json=dnsProviderSecret,proto3" json:"dns_provider_secret,omitempty"`
 	OfflinePolicy     *OfflinePolicy `protobuf:"bytes,7,opt,name=offline_policy,json=offlinePolicy,proto3" json:"offline_policy,omitempty"`
 	unknownFields     protoimpl.UnknownFields
@@ -641,7 +642,8 @@ func (x *QuotaLease) GetExpiresAtMs() int64 {
 	return 0
 }
 
-// 首次申请、续租与释放（spec/22 ACC-08、ACC-10）。以 (account_id, current_lease_id) 幂等。
+// 首次申请、续租与释放（spec/22 ACC-08、ACC-10）。以 (account_id, current_lease_id, is_release) 幂等。
+// 释放必须引用该节点上最新的 lease_id；控制面结算后回复 QuotaLease{bytes = 0}。
 type LeaseRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	AccountId      string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
@@ -834,12 +836,14 @@ func (x *RoutesApply) GetDnsProviderSecret() []byte {
 }
 
 type AgentUpgrade struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
-	Url           string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
-	Sha256        []byte                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
-	Signature     []byte                 `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`       // Ed25519，覆盖 sha256
-	KeyId         uint32                 `protobuf:"varint,5,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"` // Agent 内置“当前”与“下一把”两个公钥，按 key_id 选择（spec/40 DEP-09）
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	Url     string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
+	Sha256  []byte                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	// Ed25519 签名，签名输入为 "akari-agent-upgrade-v1" | version | sha256(32)（编码约定见 envelope.proto 文件头），
+	// 把版本号与制品摘要绑定在一起（spec/40 DEP-09）。
+	Signature     []byte `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
+	KeyId         uint32 `protobuf:"varint,5,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"` // Agent 内置“当前”与“下一把”两个公钥，按 key_id 选择（spec/40 DEP-09）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

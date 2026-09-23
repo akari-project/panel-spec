@@ -20,7 +20,7 @@ export interface paths {
          *     1. 提交邮箱与密码。密码正确时一律返回 401 `mfa_required`，附 `challenge_id` 与 `methods`；管理员尚未绑定 TOTP（首次登录）时另附 `totp_enrollment`（AUTH-22）。非管理员账号返回 403 `forbidden`。
          *     2. 提交 `challenge_id` 与 `totp_code`、`recovery_code`、`webauthn_assertion` 三者之一，不再提交密码。首次绑定时只接受 `totp_code`，成功后响应附 10 个恢复码。
          *
-         *     成功时签发受众为 `console` 的访问令牌；刷新令牌通过 `Set-Cookie` 下发（HttpOnly、Secure、SameSite=Strict，12 小时绝对失效、空闲 30 分钟失效）。每个 challenge 最多尝试 5 次，失败次数计入 AUTH-09 的登录限流。
+         *     成功时签发受众为 `console` 的访问令牌。令牌不出现在响应体中：访问令牌与刷新令牌分别以 `__Host-access_token`、`__Host-refresh_token` Cookie（HttpOnly、Secure、SameSite=Strict，Path=/）下发；刷新令牌 12 小时绝对失效、空闲 30 分钟失效（AUTH-21）。每个 challenge 最多尝试 5 次，失败次数计入 AUTH-09 的登录限流。
          */
         post: operations["createSession"];
         delete?: never;
@@ -41,7 +41,7 @@ export interface paths {
         post?: never;
         /**
          * 登出
-         * @description 吊销当前管理会话，并清除刷新令牌 Cookie。
+         * @description 吊销当前管理会话，并以过期的 Set-Cookie 清除 `__Host-access_token` 与 `__Host-refresh_token`。
          */
         delete: operations["deleteCurrentSession"];
         options?: never;
@@ -60,7 +60,7 @@ export interface paths {
         put?: never;
         /**
          * 刷新访问令牌
-         * @description 只支持 `grant_type=refresh_token`（AUTH-21）。刷新令牌默认从 Cookie 读取，也可以在表单中提交；每次使用即轮换（AUTH-07）。错误按 RFC 6749 §5.2 返回 `application/json`（CONV-16 例外）；`default` 只用于限流、服务不可用等非 OAuth 错误。
+         * @description 只支持 `grant_type=refresh_token`（AUTH-21）。刷新令牌由 `__Host-refresh_token` Cookie 携带，不在表单中提交；每次使用即轮换（AUTH-07），新的访问令牌与刷新令牌同样以 Set-Cookie 下发，不出现在响应体中。错误按 RFC 6749 §5.2 返回 `application/json`（CONV-16 例外）；`default` 只用于限流、服务不可用等非 OAuth 错误。
          */
         post: operations["refreshToken"];
         delete?: never;
@@ -141,7 +141,7 @@ export interface paths {
         put?: never;
         /**
          * 创建账号
-         * @description 由管理员代为创建账号。邮箱已存在返回 409 `conflict`。
+         * @description 由管理员代为创建账号。邮箱已被占用返回 400 `invalid_request`，`errors[].code` 为 `taken`。
          */
         post: operations["createAccount"];
         delete?: never;
@@ -164,6 +164,8 @@ export interface paths {
         /**
          * 发起注销
          * @description 账号进入 `deleting`，后续处理同 AUTH-05：吊销会话与代理凭据、结束权益、余额作废，30 天后删除个人数据。持有管理员角色、存在未完成订单时返回 409 `invalid_state`。
+         *
+         *     敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
          */
         delete: operations["deleteAccount"];
         options?: never;
@@ -190,6 +192,8 @@ export interface paths {
         /**
          * 恢复账号
          * @description 恢复后用户需重新登录，代理凭据重新生成（AUTH-25）。
+         *
+         *     原因放在请求头 `Audit-Reason` 中，缺少返回 400 `invalid_request`（AUTH-25）。
          */
         delete: operations["resumeAccount"];
         options?: never;
@@ -288,7 +292,7 @@ export interface paths {
          * 重置用户密码
          * @description 向用户邮箱发送一次性重置链接（30 分钟有效，AUTH-04），并立即吊销该账号的全部会话。管理员看不到链接与新密码。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         post: operations["resetAccountPassword"];
         delete?: never;
@@ -311,7 +315,7 @@ export interface paths {
          * 导出用户数据
          * @description 异步导出该账号的个人数据（账号资料、设备、订单、权益、余额流水、工单），不含密码哈希、令牌与代理凭据（CONV-24）。下载方式与审计日志导出一致：任务完成后从 `download_path` 下载，文件保留期满后返回 404。导出本身写入审计日志。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         post: operations["createAccountDataExport"];
         delete?: never;
@@ -486,7 +490,7 @@ export interface paths {
          * 调整余额
          * @description 写入一条原因为 `admin_adjust` 的余额流水（ORD-11）。扣减后余额小于 0 时返回 409 `invalid_state`。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         post: operations["createCreditAdjustment"];
         delete?: never;
@@ -565,7 +569,7 @@ export interface paths {
          * 从套餐移除线路组
          * @description 持有该套餐的用户立即失去该线路组节点的访问（BIL-04），写入 `plan.access_changed` 事件；执行前应调用 `POST /v1/plans/{id}/impact` 显示受影响人数。未关联时返回 404。`If-Match` 使用套餐的 ETag。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
          *
          *     必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
          */
@@ -653,7 +657,7 @@ export interface paths {
          * 应用到现有用户
          * @description 把套餐当前的所选字段写入全部生效中权益的快照（BIL-02），每个权益追加一条 `admin_adjust` 事件，由 worker 异步执行。`expected_affected_account_count` 与执行时不一致返回 409 `conflict`。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         post: operations["createPlanRollout"];
         delete?: never;
@@ -843,7 +847,7 @@ export interface paths {
         put?: never;
         /**
          * 节点建档
-         * @description 建档并生成一次性接入令牌（24 小时有效，只存哈希，NODE-01）。令牌明文与安装命令只在本次响应中返回。
+         * @description 建档并生成一次性接入令牌（24 小时有效，只存哈希，NODE-01）。令牌明文与安装命令只在本次响应中返回。本接口不接受 `Idempotency-Key`（CONV-12）：响应丢失时，用 `POST /v1/hosts/{id}/enrollment-tokens` 重新签发。
          */
         post: operations["createHost"];
         delete?: never;
@@ -892,7 +896,7 @@ export interface paths {
         put?: never;
         /**
          * 重新签发接入令牌
-         * @description 签发新的一次性接入令牌（24 小时有效），旧的未使用令牌作废。保留节点 ID、线路组、入站与路由；新 Agent 接入后按 NODE-03 轮换节点密钥。令牌明文只在本次响应中返回。
+         * @description 签发新的一次性接入令牌（24 小时有效），旧的未使用令牌作废。保留节点 ID、线路组、入站与路由；新 Agent 接入后按 NODE-03 轮换节点密钥。令牌明文只在本次响应中返回。本接口的响应含只返回一次的秘密值，不接受 `Idempotency-Key`（CONV-12）；响应丢失时重新签发即可，旧令牌随之作废。
          */
         post: operations["createEnrollmentToken"];
         delete?: never;
@@ -914,7 +918,7 @@ export interface paths {
          * 立即吊销节点密钥
          * @description 节点失陷时使用（NODE-19）：在同一事务中清空当前与上一把节点密钥，节点状态回到 `pending_enroll`，立即关闭该节点的全部会话。重新接入必须签发新的接入令牌。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         post: operations["revokeHostKey"];
         delete?: never;
@@ -935,7 +939,7 @@ export interface paths {
         put?: never;
         /**
          * 添加入站
-         * @description 保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，不通过返回 400 `invalid_request`；端口冲突返回 400，`errors[].code` 为 `not_allowed`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
+         * @description `settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时由控制面生成密钥对，响应中返回公钥。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
          */
         post: operations["createHostInbound"];
         delete?: never;
@@ -966,7 +970,7 @@ export interface paths {
         head?: never;
         /**
          * 修改入站
-         * @description 保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，不通过返回 400 `invalid_request`；端口冲突返回 400，`errors[].code` 为 `not_allowed`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
+         * @description `settings` 不含密钥，密钥放在只写的 `secrets` 中；控制面把两者深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13），不通过返回 400 `invalid_request`。Reality 公钥与短 ID 以 `settings.reality.public_key`、`settings.reality.short_ids` 为准；`reality_key_action=generate` 时由控制面生成密钥对，响应中返回公钥。hysteria2、tuic 的 `transport` 固定为 `quic`。保存时做三层校验（AGT-09）：数据库基线、节点最近上报的内核、该内核上报的协议与传输；不通过返回 409 `kernel_protocol_unsupported`。实验协议需要节点 `is_experimental_allowed`（AGT-10）。`settings` 按 JSON Schema 校验，端口冲突返回 400，`errors[].code` 为 `taken`。Xray 节点上的 Reality 入站在 `warnings` 中返回 `reality_client_incompatible`（AGT-11）。保存后以 `InboundApply` 下发该节点的全部入站。
          *
          *     必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
          */
@@ -1032,7 +1036,7 @@ export interface paths {
          * 切换节点内核
          * @description 设置控制面为该节点选定的内核（AGT-07），随 `InboundApply` 下发；Agent 切换失败时回退并在 `last_switch_error` 中报告。已启用的入站有任一不被目标内核支持时返回 409 `kernel_protocol_unsupported`，并在 `incompatible_inbounds` 中列出；执行前应调用 `POST /v1/hosts/{id}/impact`。`If-Match` 使用 `GET /v1/hosts/{id}/kernel` 返回的 ETag。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          *
          *     必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
          */
@@ -1073,7 +1077,7 @@ export interface paths {
         };
         /**
          * 内核能力矩阵（只读）
-         * @description 基线矩阵与各节点上报的能力（spec/21 21.2）。内核数量固定为少数几个，不分页。
+         * @description 数据库基线矩阵（spec/21 21.2）；各节点上报的能力见节点详情的 `reported_kernels`。内核数量固定为少数几个，不分页。
          */
         get: operations["listKernels"];
         put?: never;
@@ -1149,7 +1153,7 @@ export interface paths {
          * 退款
          * @description 可退金额与原路退回上限见订单的 `refundable_minor`、`refundable_original_minor`（ORD-09）；超出返回 400 `invalid_request`（`errors[].code` 为 `out_of_range`）。同一订单的退款串行执行。成功后写余额流水与 `refund` 权益事件（ORD-10）。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         post: operations["createOrderRefund"];
         delete?: never;
@@ -1188,7 +1192,7 @@ export interface paths {
          * 手动标记支付（仅 superadmin）
          * @description 只有 superadmin 可以执行，任何角色都不能被授予该操作（AUTH-22、ORD-12）。把 `pending`、`expired` 或 `cancelled` 订单标记为已支付（`provider=manual`），在同一事务中写入 `order.paid` 事件，由 worker 按 ORD-05 开通。其他状态返回 409 `invalid_state`。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         post: operations["markOrderPaid"];
         delete?: never;
@@ -1238,7 +1242,7 @@ export interface paths {
          * 修改支付宝当面付配置
          * @description 结算货币不是 CNY 时启用返回 409 `invalid_state`（PAY-03）。`app_private_key` 只写，审计记录中只记“已修改”。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          *
          *     必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
          */
@@ -1311,7 +1315,7 @@ export interface paths {
         put?: never;
         /**
          * 创建优惠券
-         * @description 码值只存哈希（ORD-13），明文只在本次响应中返回。码值已存在返回 409 `conflict`。
+         * @description 码值只存哈希（ORD-13），明文只在本次响应中返回，因此不接受 `Idempotency-Key`（CONV-12）。码值已存在返回 400 `invalid_request`，`errors[].code` 为 `taken`。
          */
         post: operations["createCoupon"];
         delete?: never;
@@ -1374,7 +1378,7 @@ export interface paths {
         put?: never;
         /**
          * 生成兑换码批次
-         * @description 码值为 16 位随机字符（去除易混字符），只存哈希（ORD-14）。**明文码只在本次响应中返回一次**（CON-06），`codes_csv` 供界面提供一次性 CSV 下载；此后只能导出使用记录。幂等重放返回 409 `conflict` 而不是再次返回明文。
+         * @description 码值为 16 位随机字符（去除易混字符），只存哈希（ORD-14）。**明文码只在本次响应中返回一次**（CON-06），`codes_csv` 供界面提供一次性 CSV 下载；此后只能导出使用记录。本接口不接受 `Idempotency-Key`（CONV-12）：响应丢失时停用该批次并重新生成。
          */
         post: operations["createRedeemCodeBatch"];
         delete?: never;
@@ -1822,7 +1826,7 @@ export interface paths {
          * 移除管理员
          * @description 移除该账号的全部角色并吊销其管理会话；账号本身保留。移除最后一个 superadmin 返回 409 `invalid_state`。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
          */
         delete: operations["removeStaff"];
         options?: never;
@@ -1831,7 +1835,7 @@ export interface paths {
          * 修改管理员角色
          * @description 只有 superadmin 能分配角色，且不能授予超出自身的权限（AUTH-22）；移除最后一个 superadmin 返回 409 `invalid_state`。变更后吊销该管理员的全部管理会话（AUTH-21）。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         patch: operations["updateStaff"];
         trace?: never;
@@ -1850,7 +1854,7 @@ export interface paths {
          * 邀请管理员
          * @description 发送一次性邀请邮件，72 小时有效（AUTH-22）；只有 superadmin 能邀请，且不能授予超出自身的权限。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         post: operations["createStaffInvitation"];
         delete?: never;
@@ -1874,7 +1878,7 @@ export interface paths {
          * 撤销邀请
          * @description 只能撤销 `pending` 的邀请，否则返回 409 `invalid_state`。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
          */
         delete: operations["revokeStaffInvitation"];
         options?: never;
@@ -1891,7 +1895,7 @@ export interface paths {
         };
         /**
          * 角色列表
-         * @description 角色数量少，不分页。
+         * @description 不分页：角色总数上限 100（含 3 个内置角色），超过时创建返回 409 `invalid_state`。
          */
         get: operations["listRoles"];
         put?: never;
@@ -1899,7 +1903,7 @@ export interface paths {
          * 创建自定义角色
          * @description 权限必须是 AUTH-17 权限目录的子集，且不超出操作者自身权限；不能包含 `*`，也不能包含手动标记支付（AUTH-22）。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         post: operations["createRole"];
         delete?: never;
@@ -1923,7 +1927,7 @@ export interface paths {
          * 删除自定义角色
          * @description 内置角色，或仍有管理员持有的角色，返回 409 `invalid_state`。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
          *
          *     必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
          */
@@ -1934,7 +1938,7 @@ export interface paths {
          * 修改自定义角色
          * @description 内置角色返回 409 `invalid_state`。变更后吊销持有该角色的管理员的全部管理会话（AUTH-21）。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          *
          *     必须携带 `If-Match`：缺少返回 428 `precondition_required`，与当前 ETag 不一致返回 409 `conflict`（CONV-28）。
          */
@@ -1989,7 +1993,7 @@ export interface paths {
          * 导出审计日志
          * @description 异步生成导出文件（AUTH-18）。导出本身写入审计日志。
          *
-         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；缺少或过期返回 401 `mfa_required`。
+         *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
         post: operations["createAuditExport"];
         delete?: never;
@@ -2066,8 +2070,7 @@ export interface components {
             title: string;
             /** Format: int32 */
             status: number;
-            /** @description 机器可读的错误码，取值见 spec/02 CONV-16 */
-            code: string;
+            code: components["schemas"]["ProblemCode"];
             detail?: string;
             request_id: string;
             errors?: components["schemas"]["FieldError"][];
@@ -2084,10 +2087,20 @@ export interface components {
             incompatible_inbounds?: components["schemas"]["IncompatibleInbound"][];
         };
         FieldError: {
+            /** @description 字段路径，如 `reality.short_ids`；请求头参数使用请求头名 */
             field: string;
-            /** @enum {string} */
-            code: "required" | "invalid_format" | "too_short" | "too_long" | "out_of_range" | "not_allowed" | "invalid_code" | "expired" | "exhausted";
+            code: components["schemas"]["FieldErrorCode"];
         };
+        /**
+         * @description 错误码，取值见 spec/02 CONV-16，与客户端接口相同
+         * @enum {string}
+         */
+        ProblemCode: "invalid_request" | "unauthenticated" | "mfa_required" | "forbidden" | "email_unverified" | "registration_closed" | "account_suspended" | "not_found" | "conflict" | "invalid_state" | "quote_expired" | "entitlement_required" | "device_limit_reached" | "payment_unavailable" | "kernel_protocol_unsupported" | "payload_too_large" | "idempotency_key_reused" | "upgrade_required" | "precondition_required" | "rate_limited" | "internal" | "service_unavailable";
+        /**
+         * @description `errors[].code`，取值见 spec/02 CONV-16；`taken`（取值已被占用）只用于管理接口
+         * @enum {string}
+         */
+        FieldErrorCode: "required" | "invalid_format" | "too_short" | "too_long" | "out_of_range" | "not_allowed" | "invalid_code" | "incorrect" | "expired" | "exhausted" | "taken";
         /** @description RFC 6749 §5.2 错误响应（CONV-16 的唯一例外） */
         OAuthError: {
             /** @enum {string} */
@@ -2124,25 +2137,35 @@ export interface components {
             /** @description WebAuthn 断言（M4） */
             webauthn_assertion?: Record<string, never>;
         };
+        /** @description 令牌不出现在响应体中，只以 Set-Cookie 下发 */
         ConsoleSession: {
-            /** @description PASETO v4.public，受众 `console`，15 分钟有效 */
-            access_token: string;
-            /** @enum {string} */
-            token_type: "Bearer";
-            /** Format: int32 */
-            expires_in: number;
             /** Format: uuid */
             session_id: string;
+            /**
+             * Format: date-time
+             * @description 访问令牌（Cookie `__Host-access_token`）的失效时间，15 分钟
+             */
+            access_expires_at: string;
+            /**
+             * Format: date-time
+             * @description 刷新令牌（Cookie `__Host-refresh_token`）的绝对失效时间，自登录起 12 小时
+             */
+            refresh_expires_at: string;
             staff: components["schemas"]["StaffMe"];
             /** @description 本次登录同时完成 TOTP 绑定时返回的 10 个恢复码，只返回一次 */
             recovery_codes?: string[];
         };
-        OAuthToken: {
-            access_token: string;
-            /** @enum {string} */
-            token_type: "Bearer";
-            /** Format: int32 */
-            expires_in: number;
+        /** @description 令牌不出现在响应体中，只以 Set-Cookie 下发 */
+        SessionRefresh: {
+            /** Format: uuid */
+            session_id: string;
+            /** Format: date-time */
+            access_expires_at: string;
+            /**
+             * Format: date-time
+             * @description 绝对失效时间不因轮换而延长
+             */
+            refresh_expires_at: string;
         };
         /** @description 提交 TOTP 码或 Passkey 断言之一（恢复码不可用于 step-up） */
         StepUpRequest: {
@@ -2795,7 +2818,8 @@ export interface components {
             version: string;
             stable_protocols: ("vless" | "vmess" | "trojan" | "shadowsocks" | "hysteria2" | "tuic" | "anytls")[];
             experimental_protocols: ("vless" | "vmess" | "trojan" | "shadowsocks" | "hysteria2" | "tuic" | "anytls")[];
-            transports: ("tcp" | "ws" | "grpc" | "httpupgrade" | "xhttp" | "mkcp" | "quic")[];
+            stable_transports: ("tcp" | "ws" | "grpc" | "httpupgrade" | "xhttp" | "mkcp" | "quic")[];
+            experimental_transports: ("tcp" | "ws" | "grpc" | "httpupgrade" | "xhttp" | "mkcp" | "quic")[];
         };
         HostLoad: {
             /** Format: int32 */
@@ -2928,17 +2952,15 @@ export interface components {
              */
             transport: "tcp" | "ws" | "grpc" | "httpupgrade" | "xhttp" | "mkcp" | "quic";
             listen_port: number;
-            /** @description 按“协议 + 传输”的 JSON Schema 校验（panel-spec/schemas/inbound/，AGT-13）；不含密钥 */
+            /** @description 入站配置，不含密钥。控制面把 `settings` 与 `secrets` 深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13） */
             settings: Record<string, never>;
             is_enabled: boolean;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             host_id: string;
-            /** @description 是否已设置密钥（如 Reality 私钥）；密钥值永不返回 */
+            /** @description 是否已设置密钥（如 Reality 私钥、Shadowsocks 2022 主密钥）；密钥值永不返回 */
             has_secrets: boolean;
-            reality_public_key?: string | null;
-            reality_short_ids?: string[];
             /** @description 能力校验失败时为 false（AGT-09） */
             is_available: boolean;
             health?: components["schemas"]["InboundHealth"] | null;
@@ -2959,13 +2981,13 @@ export interface components {
              */
             transport: "tcp" | "ws" | "grpc" | "httpupgrade" | "xhttp" | "mkcp" | "quic";
             listen_port: number;
-            /** @description 按“协议 + 传输”的 JSON Schema 校验（panel-spec/schemas/inbound/，AGT-13）；不含密钥 */
+            /** @description 入站配置，不含密钥。控制面把 `settings` 与 `secrets` 深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13） */
             settings: Record<string, never>;
             is_enabled?: boolean;
-            /** @description 只写：密钥类配置，按 CONV-19 加密存储 */
+            /** @description 只写：密钥字段，结构与 settings 中对应位置相同（如 `{"reality": {"private_key": "..."}}`），按 CONV-19 加密存储，永不返回 */
             secrets?: Record<string, never>;
             /**
-             * @description `generate` 由控制面生成 Reality 密钥对与短 ID（NODE-04）
+             * @description `generate` 由控制面生成 Reality 密钥对（NODE-04）：私钥存入 secrets，公钥写入 `settings.reality.public_key` 并在响应中返回
              * @enum {string}
              */
             reality_key_action?: "keep" | "generate";
@@ -2979,11 +3001,15 @@ export interface components {
              */
             transport?: "tcp" | "ws" | "grpc" | "httpupgrade" | "xhttp" | "mkcp" | "quic";
             listen_port?: number;
-            /** @description 按“协议 + 传输”的 JSON Schema 校验（panel-spec/schemas/inbound/，AGT-13）；不含密钥 */
+            /** @description 入站配置，不含密钥。控制面把 `settings` 与 `secrets` 深度合并后，按 `schemas/inbound/<protocol>-<transport>.schema.json` 校验合并结果（AGT-13） */
             settings?: Record<string, never>;
             is_enabled?: boolean;
+            /** @description 只写：提交时整体替换已保存的密钥；省略表示保留 */
             secrets?: Record<string, never>;
-            /** @enum {string} */
+            /**
+             * @description `generate` 重新生成 Reality 密钥对
+             * @enum {string}
+             */
             reality_key_action?: "keep" | "generate";
         };
         HostRoute: {
@@ -3044,7 +3070,7 @@ export interface components {
             location_group_ids?: string[];
             is_deletion?: boolean;
         };
-        /** @description 数据库基线矩阵（kernel_protocols、kernel_transports）与节点上报能力（spec/21 21.2） */
+        /** @description 数据库基线矩阵（kernel_protocols、kernel_transports，spec/21 21.2）；各节点上报的能力见 `Host.reported_kernels` */
         KernelSupport: {
             name: components["schemas"]["Kernel"];
             protocols: {
@@ -3058,15 +3084,6 @@ export interface components {
                 transport: "tcp" | "ws" | "grpc" | "httpupgrade" | "xhttp" | "mkcp" | "quic";
                 /** @enum {string} */
                 status: "stable" | "experimental";
-            }[];
-            /** @description 各节点最近上报的该内核能力 */
-            host_reports: {
-                /** Format: uuid */
-                host_id: string;
-                host_name: string;
-                report: components["schemas"]["KernelReport"];
-                /** Format: date-time */
-                reported_at: string;
             }[];
         };
         Order: {
@@ -3149,6 +3166,8 @@ export interface components {
         RefundCreate: {
             /** Format: int64 */
             amount_minor: number;
+            /** @description 必须等于订单币种 */
+            currency: string;
             /**
              * @description `original` 原路退回，只能退渠道实收部分；`credit` 退回余额
              * @enum {string}
@@ -3246,7 +3265,13 @@ export interface components {
             out_trade_no?: string | null;
             trade_no?: string | null;
             trade_status?: string | null;
-            total_amount?: string | null;
+            /**
+             * Format: int64
+             * @description 通知金额换算为最小货币单位；原值只保留在 `raw` 中
+             */
+            amount_minor?: number | null;
+            /** @description ISO 4217 货币代码（CONV-05） */
+            currency?: string | null;
             is_verified: boolean;
             /** @enum {string} */
             result: "processed" | "duplicate" | "rejected_signature" | "rejected_app" | "rejected_amount" | "order_not_found" | "ignored_status" | "late_paid";
@@ -3535,14 +3560,18 @@ export interface components {
             /** @enum {string} */
             status?: "open" | "in_progress" | "waiting_user" | "closed";
         };
+        /** @description 与客户端接口的附件对象相同，另加 `download_path` */
         Attachment: {
             /** Format: uuid */
             id: string;
+            filename: string;
             /** @enum {string} */
             content_type: "image/png" | "image/jpeg" | "image/webp";
             bytes_size: number;
-            filename: string;
-            download_path: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description 管理接口附加字段：下载路径 */
+            download_path?: string;
         };
         TicketMessage: {
             /** Format: uuid */
@@ -3684,8 +3713,13 @@ export interface components {
                 rate_bps?: number;
                 /** @enum {string} */
                 scope?: "first_order" | "every_order";
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description 单人返利上限；为空表示不限
+                 */
                 cap_minor?: number | null;
+                /** @description 等于站点结算货币 */
+                readonly currency?: string;
                 freeze_days?: number;
                 burst_threshold?: number;
             };
@@ -3736,8 +3770,13 @@ export interface components {
                 rate_bps?: number;
                 /** @enum {string} */
                 scope?: "first_order" | "every_order";
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description 单人返利上限；为空表示不限
+                 */
                 cap_minor?: number | null;
+                /** @description 等于站点结算货币 */
+                readonly currency?: string;
                 freeze_days?: number;
                 burst_threshold?: number;
             };
@@ -4025,14 +4064,19 @@ export interface components {
         /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
         IdempotencyKey: string;
         /**
-         * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+         * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
          * @example "p-4f1c9a2e"
          */
         IfMatch: string;
         /** @description 与当前 ETag 相同时返回 304（CONV-13） */
         IfNoneMatch: string;
-        /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
+        /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
         MfaAssertion: string;
+        /**
+         * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+         * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
+         */
+        AuditReason: string;
     };
     requestBodies: never;
     headers: {
@@ -4064,17 +4108,19 @@ export interface operations {
             /** @description 登录成功 */
             201: {
                 headers: {
-                    /** @description 刷新令牌 Cookie */
+                    /**
+                     * @description 两个 Cookie：`__Host-access_token`（访问令牌，Max-Age=900）与 `__Host-refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）
+                     * @example __Host-access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict
+                     */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     /**
                      * @example {
-                     *       "access_token": "v4.public.eyJhdWQiOiJjb25zb2xlIiwic2lkIjoiMDE5MjdjM2UifQ.c2lnbmF0dXJl",
-                     *       "token_type": "Bearer",
-                     *       "expires_in": 900,
                      *       "session_id": "01927c3e-8a41-7026-9d3e-5f6a7b8c0026",
+                     *       "access_expires_at": "2026-09-23T10:30:00+08:00",
+                     *       "refresh_expires_at": "2026-09-23T22:15:00+08:00",
                      *       "staff": {
                      *         "account_id": "01927c3e-8a41-7003-9d3e-5f6a7b8c0003",
                      *         "email": "ops@example.com",
@@ -4123,9 +4169,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 已完成 */
+            /** @description 已登出 */
             204: {
                 headers: {
+                    /**
+                     * @description 以 Max-Age=0 清除 `__Host-access_token` 与 `__Host-refresh_token`
+                     * @example __Host-access_token=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict
+                     */
+                    "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -4151,31 +4202,42 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "grant_type": "refresh_token"
+                 *     }
+                 */
                 "application/x-www-form-urlencoded": {
                     /** @enum {string} */
                     grant_type: "refresh_token";
-                    /** @description 省略时读取 Cookie */
-                    refresh_token?: string;
                 };
             };
         };
         responses: {
-            /** @description 新的访问令牌；新的刷新令牌通过 Set-Cookie 下发 */
+            /** @description 已轮换 */
             200: {
                 headers: {
-                    /** @description 轮换后的刷新令牌 Cookie */
+                    /**
+                     * @description 两个 Cookie：`__Host-access_token`（访问令牌，Max-Age=900）与 `__Host-refresh_token`（刷新令牌），均为 HttpOnly、Secure、SameSite=Strict、Path=/（AUTH-08、AUTH-21）
+                     * @example __Host-access_token=v4.public.eyJhdWQiOiJjb25zb2xlIn0.c2ln; Max-Age=900; Path=/; Secure; HttpOnly; SameSite=Strict
+                     */
                     "Set-Cookie"?: string;
+                    /**
+                     * @description `no-store`（RFC 6749 §5.1）
+                     * @example no-store
+                     */
+                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     /**
                      * @example {
-                     *       "access_token": "v4.public.eyJhdWQiOiJjb25zb2xlIiwic2lkIjoiMDE5MjdjM2UiLCJyIjoxfQ.c2lnbmF0dXJl",
-                     *       "token_type": "Bearer",
-                     *       "expires_in": 900
+                     *       "session_id": "01927c3e-8a41-7026-9d3e-5f6a7b8c0026",
+                     *       "access_expires_at": "2026-09-23T10:30:00+08:00",
+                     *       "refresh_expires_at": "2026-09-23T21:00:00+08:00"
                      *     }
                      */
-                    "application/json": components["schemas"]["OAuthToken"];
+                    "application/json": components["schemas"]["SessionRefresh"];
                 };
             };
             /** @description OAuth 错误 */
@@ -4271,6 +4333,15 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["MfaAssertion"];
+                };
+            };
+            /** @description 验证失败 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             429: components["responses"]["RateLimited"];
@@ -4465,6 +4536,15 @@ export interface operations {
                     "application/json": components["schemas"]["Account"];
                 };
             };
+            /** @description 参数错误 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             default: components["responses"]["Problem"];
         };
     };
@@ -4537,23 +4617,22 @@ export interface operations {
     deleteAccount: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
+                 */
+                "Audit-Reason"?: components["parameters"]["AuditReason"];
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
+            };
             path: {
                 /** @description 账号 ID */
                 id: string;
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "reason": "用户通过工单 TCK-20260921-P3LX8C 申请注销"
-                 *     }
-                 */
-                "application/json": components["schemas"]["ReasonBody"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description 已进入注销 */
             202: {
@@ -4747,23 +4826,20 @@ export interface operations {
     resumeAccount: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
+                 */
+                "Audit-Reason"?: components["parameters"]["AuditReason"];
+            };
             path: {
                 /** @description 账号 ID */
                 id: string;
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "reason": "用户承诺不再共享，解除暂停"
-                 *     }
-                 */
-                "application/json": components["schemas"]["ReasonBody"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description 已恢复 */
             200: {
@@ -4987,9 +5063,9 @@ export interface operations {
     resetAccountPassword: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
@@ -5082,9 +5158,9 @@ export interface operations {
     createAccountDataExport: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
@@ -5813,9 +5889,9 @@ export interface operations {
     createCreditAdjustment: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
@@ -6094,12 +6170,12 @@ export interface operations {
     deletePlan: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 套餐 ID */
@@ -6132,12 +6208,12 @@ export interface operations {
     updatePlan: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 套餐 ID */
@@ -6228,12 +6304,12 @@ export interface operations {
     addPlanLocationGroup: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 套餐 ID */
@@ -6316,14 +6392,19 @@ export interface operations {
     removePlanLocationGroup: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
+                 */
+                "Audit-Reason"?: components["parameters"]["AuditReason"];
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
+                /**
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 套餐 ID */
@@ -6333,16 +6414,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "reason": "日本线路组并入亚太标准，移除旧组"
-                 *     }
-                 */
-                "application/json": components["schemas"]["ReasonBody"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description 已移除 */
             200: {
@@ -6577,12 +6649,12 @@ export interface operations {
     discontinuePlanPrice: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 套餐 ID */
@@ -6737,9 +6809,9 @@ export interface operations {
     createPlanRollout: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
@@ -6978,12 +7050,12 @@ export interface operations {
     discontinueAddonPrice: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 加购价格 ID */
@@ -7181,12 +7253,12 @@ export interface operations {
     deleteLocationGroup: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 线路组 ID */
@@ -7219,12 +7291,12 @@ export interface operations {
     updateLocationGroup: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 线路组 ID */
@@ -7504,13 +7576,14 @@ export interface operations {
                      *                 "anytls"
                      *               ],
                      *               "experimental_protocols": [],
-                     *               "transports": [
+                     *               "stable_transports": [
                      *                 "tcp",
                      *                 "ws",
                      *                 "grpc",
                      *                 "httpupgrade",
                      *                 "quic"
-                     *               ]
+                     *               ],
+                     *               "experimental_transports": []
                      *             },
                      *             {
                      *               "kernel": "xray",
@@ -7524,13 +7597,15 @@ export interface operations {
                      *               "experimental_protocols": [
                      *                 "hysteria2"
                      *               ],
-                     *               "transports": [
+                     *               "stable_transports": [
                      *                 "tcp",
                      *                 "ws",
                      *                 "grpc",
                      *                 "httpupgrade",
                      *                 "xhttp",
-                     *                 "mkcp",
+                     *                 "mkcp"
+                     *               ],
+                     *               "experimental_transports": [
                      *                 "quic"
                      *               ]
                      *             }
@@ -7588,10 +7663,7 @@ export interface operations {
     createHost: {
         parameters: {
             query?: never;
-            header?: {
-                /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -7713,13 +7785,14 @@ export interface operations {
                      *             "anytls"
                      *           ],
                      *           "experimental_protocols": [],
-                     *           "transports": [
+                     *           "stable_transports": [
                      *             "tcp",
                      *             "ws",
                      *             "grpc",
                      *             "httpupgrade",
                      *             "quic"
-                     *           ]
+                     *           ],
+                     *           "experimental_transports": []
                      *         },
                      *         {
                      *           "kernel": "xray",
@@ -7733,13 +7806,15 @@ export interface operations {
                      *           "experimental_protocols": [
                      *             "hysteria2"
                      *           ],
-                     *           "transports": [
+                     *           "stable_transports": [
                      *             "tcp",
                      *             "ws",
                      *             "grpc",
                      *             "httpupgrade",
                      *             "xhttp",
-                     *             "mkcp",
+                     *             "mkcp"
+                     *           ],
+                     *           "experimental_transports": [
                      *             "quic"
                      *           ]
                      *         }
@@ -7768,12 +7843,12 @@ export interface operations {
     deleteHost: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 节点 ID */
@@ -7806,12 +7881,12 @@ export interface operations {
     updateHost: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 节点 ID */
@@ -7868,13 +7943,14 @@ export interface operations {
                      *             "anytls"
                      *           ],
                      *           "experimental_protocols": [],
-                     *           "transports": [
+                     *           "stable_transports": [
                      *             "tcp",
                      *             "ws",
                      *             "grpc",
                      *             "httpupgrade",
                      *             "quic"
-                     *           ]
+                     *           ],
+                     *           "experimental_transports": []
                      *         },
                      *         {
                      *           "kernel": "xray",
@@ -7888,13 +7964,15 @@ export interface operations {
                      *           "experimental_protocols": [
                      *             "hysteria2"
                      *           ],
-                     *           "transports": [
+                     *           "stable_transports": [
                      *             "tcp",
                      *             "ws",
                      *             "grpc",
                      *             "httpupgrade",
                      *             "xhttp",
-                     *             "mkcp",
+                     *             "mkcp"
+                     *           ],
+                     *           "experimental_transports": [
                      *             "quic"
                      *           ]
                      *         }
@@ -7932,10 +8010,7 @@ export interface operations {
     createEnrollmentToken: {
         parameters: {
             query?: never;
-            header?: {
-                /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-            };
+            header?: never;
             path: {
                 /** @description 节点 ID */
                 id: string;
@@ -7968,9 +8043,9 @@ export interface operations {
     revokeHostKey: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
@@ -8043,21 +8118,24 @@ export interface operations {
                      *           "transport": "tcp",
                      *           "listen_port": 443,
                      *           "settings": {
-                     *             "flow": "xtls-rprx-vision",
+                     *             "transport": "tcp",
                      *             "security": "reality",
+                     *             "flow": "xtls-rprx-vision",
                      *             "reality": {
-                     *               "dest": "www.microsoft.com:443",
-                     *               "sni": [
-                     *                 "www.microsoft.com"
+                     *               "public_key": "6xQP4ob0T5O-7PTjhDoRsoePEc-uYvPUanPWUITGiLI",
+                     *               "short_ids": [
+                     *                 "",
+                     *                 "6ba85179e30d4fc2"
+                     *               ],
+                     *               "handshake_address": "www.example.org",
+                     *               "handshake_port": 443,
+                     *               "sni_names": [
+                     *                 "www.example.org"
                      *               ]
                      *             }
                      *           },
                      *           "is_enabled": true,
                      *           "has_secrets": true,
-                     *           "reality_public_key": "Zl3o7mS0cVqPq3bJ4yN2w8kR5tXhA1uD9eG6fB0iK2s",
-                     *           "reality_short_ids": [
-                     *             "6ba85179e30d4fc2"
-                     *           ],
                      *           "is_available": true,
                      *           "health": {
                      *             "is_listening": true,
@@ -8076,12 +8154,21 @@ export interface operations {
                      *           "transport": "quic",
                      *           "listen_port": 8443,
                      *           "settings": {
-                     *             "congestion_control": "bbr"
+                     *             "transport": "quic",
+                     *             "tls": {
+                     *               "sni": "hk01.edge.example.net",
+                     *               "alpn": [
+                     *                 "h3"
+                     *               ],
+                     *               "cert_mode": "acme_dns"
+                     *             },
+                     *             "congestion_control": "bbr",
+                     *             "auth_timeout_ms": 3000,
+                     *             "heartbeat_ms": 10000,
+                     *             "is_zero_rtt_enabled": false
                      *           },
                      *           "is_enabled": true,
                      *           "has_secrets": false,
-                     *           "reality_public_key": null,
-                     *           "reality_short_ids": [],
                      *           "is_available": true,
                      *           "health": {
                      *             "is_listening": true,
@@ -8127,12 +8214,18 @@ export interface operations {
                  *       "transport": "tcp",
                  *       "listen_port": 443,
                  *       "settings": {
-                 *         "flow": "xtls-rprx-vision",
+                 *         "transport": "tcp",
                  *         "security": "reality",
+                 *         "flow": "xtls-rprx-vision",
                  *         "reality": {
-                 *           "dest": "www.microsoft.com:443",
-                 *           "sni": [
-                 *             "www.microsoft.com"
+                 *           "short_ids": [
+                 *             "",
+                 *             "6ba85179e30d4fc2"
+                 *           ],
+                 *           "handshake_address": "www.example.org",
+                 *           "handshake_port": 443,
+                 *           "sni_names": [
+                 *             "www.example.org"
                  *           ]
                  *         }
                  *       },
@@ -8158,21 +8251,24 @@ export interface operations {
                      *       "transport": "tcp",
                      *       "listen_port": 443,
                      *       "settings": {
-                     *         "flow": "xtls-rprx-vision",
+                     *         "transport": "tcp",
                      *         "security": "reality",
+                     *         "flow": "xtls-rprx-vision",
                      *         "reality": {
-                     *           "dest": "www.microsoft.com:443",
-                     *           "sni": [
-                     *             "www.microsoft.com"
+                     *           "public_key": "6xQP4ob0T5O-7PTjhDoRsoePEc-uYvPUanPWUITGiLI",
+                     *           "short_ids": [
+                     *             "",
+                     *             "6ba85179e30d4fc2"
+                     *           ],
+                     *           "handshake_address": "www.example.org",
+                     *           "handshake_port": 443,
+                     *           "sni_names": [
+                     *             "www.example.org"
                      *           ]
                      *         }
                      *       },
                      *       "is_enabled": true,
                      *       "has_secrets": true,
-                     *       "reality_public_key": "Zl3o7mS0cVqPq3bJ4yN2w8kR5tXhA1uD9eG6fB0iK2s",
-                     *       "reality_short_ids": [
-                     *         "6ba85179e30d4fc2"
-                     *       ],
                      *       "is_available": true,
                      *       "health": {
                      *         "is_listening": true,
@@ -8232,21 +8328,24 @@ export interface operations {
                      *       "transport": "tcp",
                      *       "listen_port": 443,
                      *       "settings": {
-                     *         "flow": "xtls-rprx-vision",
+                     *         "transport": "tcp",
                      *         "security": "reality",
+                     *         "flow": "xtls-rprx-vision",
                      *         "reality": {
-                     *           "dest": "www.microsoft.com:443",
-                     *           "sni": [
-                     *             "www.microsoft.com"
+                     *           "public_key": "6xQP4ob0T5O-7PTjhDoRsoePEc-uYvPUanPWUITGiLI",
+                     *           "short_ids": [
+                     *             "",
+                     *             "6ba85179e30d4fc2"
+                     *           ],
+                     *           "handshake_address": "www.example.org",
+                     *           "handshake_port": 443,
+                     *           "sni_names": [
+                     *             "www.example.org"
                      *           ]
                      *         }
                      *       },
                      *       "is_enabled": true,
                      *       "has_secrets": true,
-                     *       "reality_public_key": "Zl3o7mS0cVqPq3bJ4yN2w8kR5tXhA1uD9eG6fB0iK2s",
-                     *       "reality_short_ids": [
-                     *         "6ba85179e30d4fc2"
-                     *       ],
                      *       "is_available": true,
                      *       "health": {
                      *         "is_listening": true,
@@ -8269,12 +8368,12 @@ export interface operations {
     deleteHostInbound: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 节点 ID */
@@ -8309,12 +8408,12 @@ export interface operations {
     updateHostInbound: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 节点 ID */
@@ -8350,21 +8449,24 @@ export interface operations {
                      *       "transport": "tcp",
                      *       "listen_port": 8443,
                      *       "settings": {
-                     *         "flow": "xtls-rprx-vision",
+                     *         "transport": "tcp",
                      *         "security": "reality",
+                     *         "flow": "xtls-rprx-vision",
                      *         "reality": {
-                     *           "dest": "www.microsoft.com:443",
-                     *           "sni": [
-                     *             "www.microsoft.com"
+                     *           "public_key": "6xQP4ob0T5O-7PTjhDoRsoePEc-uYvPUanPWUITGiLI",
+                     *           "short_ids": [
+                     *             "",
+                     *             "6ba85179e30d4fc2"
+                     *           ],
+                     *           "handshake_address": "www.example.org",
+                     *           "handshake_port": 443,
+                     *           "sni_names": [
+                     *             "www.example.org"
                      *           ]
                      *         }
                      *       },
                      *       "is_enabled": true,
                      *       "has_secrets": true,
-                     *       "reality_public_key": "Zl3o7mS0cVqPq3bJ4yN2w8kR5tXhA1uD9eG6fB0iK2s",
-                     *       "reality_short_ids": [
-                     *         "6ba85179e30d4fc2"
-                     *       ],
                      *       "is_available": true,
                      *       "health": {
                      *         "is_listening": true,
@@ -8609,12 +8711,12 @@ export interface operations {
     deleteHostRoute: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 节点 ID */
@@ -8649,12 +8751,12 @@ export interface operations {
     updateHostRoute: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 节点 ID */
@@ -8776,14 +8878,14 @@ export interface operations {
     switchHostKernel: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 节点 ID */
@@ -8965,34 +9067,6 @@ export interface operations {
                      *               "transport": "quic",
                      *               "status": "stable"
                      *             }
-                     *           ],
-                     *           "host_reports": [
-                     *             {
-                     *               "host_id": "01927c3e-8a41-7010-9d3e-5f6a7b8c0010",
-                     *               "host_name": "香港 01",
-                     *               "report": {
-                     *                 "kernel": "singbox",
-                     *                 "version": "1.13.2",
-                     *                 "stable_protocols": [
-                     *                   "vless",
-                     *                   "vmess",
-                     *                   "trojan",
-                     *                   "shadowsocks",
-                     *                   "hysteria2",
-                     *                   "tuic",
-                     *                   "anytls"
-                     *                 ],
-                     *                 "experimental_protocols": [],
-                     *                 "transports": [
-                     *                   "tcp",
-                     *                   "ws",
-                     *                   "grpc",
-                     *                   "httpupgrade",
-                     *                   "quic"
-                     *                 ]
-                     *               },
-                     *               "reported_at": "2026-09-23T08:00:02+08:00"
-                     *             }
                      *           ]
                      *         }
                      *       ]
@@ -9077,34 +9151,6 @@ export interface operations {
                      *         {
                      *           "transport": "quic",
                      *           "status": "stable"
-                     *         }
-                     *       ],
-                     *       "host_reports": [
-                     *         {
-                     *           "host_id": "01927c3e-8a41-7010-9d3e-5f6a7b8c0010",
-                     *           "host_name": "香港 01",
-                     *           "report": {
-                     *             "kernel": "singbox",
-                     *             "version": "1.13.2",
-                     *             "stable_protocols": [
-                     *               "vless",
-                     *               "vmess",
-                     *               "trojan",
-                     *               "shadowsocks",
-                     *               "hysteria2",
-                     *               "tuic",
-                     *               "anytls"
-                     *             ],
-                     *             "experimental_protocols": [],
-                     *             "transports": [
-                     *               "tcp",
-                     *               "ws",
-                     *               "grpc",
-                     *               "httpupgrade",
-                     *               "quic"
-                     *             ]
-                     *           },
-                     *           "reported_at": "2026-09-23T08:00:02+08:00"
                      *         }
                      *       ]
                      *     }
@@ -9328,9 +9374,9 @@ export interface operations {
     createOrderRefund: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
@@ -9345,6 +9391,7 @@ export interface operations {
                 /**
                  * @example {
                  *       "amount_minor": 1250,
+                 *       "currency": "CNY",
                  *       "destination": "original",
                  *       "reason": "用户所在地区线路长期不可用，按剩余价值退款"
                  *     }
@@ -9433,9 +9480,9 @@ export interface operations {
     markOrderPaid: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
@@ -9601,14 +9648,14 @@ export interface operations {
     updateAlipayF2f: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path?: never;
             cookie?: never;
@@ -9730,7 +9777,8 @@ export interface operations {
                      *           "out_trade_no": "ORD-20260920-K7Q2XM",
                      *           "trade_no": "2026092022001404561234567890",
                      *           "trade_status": "TRADE_SUCCESS",
-                     *           "total_amount": "12.50",
+                     *           "amount_minor": 1250,
+                     *           "currency": "CNY",
                      *           "is_verified": true,
                      *           "result": "processed",
                      *           "raw": {
@@ -9782,7 +9830,8 @@ export interface operations {
                      *       "out_trade_no": "ORD-20260920-K7Q2XM",
                      *       "trade_no": "2026092022001404561234567890",
                      *       "trade_status": "TRADE_SUCCESS",
-                     *       "total_amount": "12.50",
+                     *       "amount_minor": 1250,
+                     *       "currency": "CNY",
                      *       "is_verified": true,
                      *       "result": "processed",
                      *       "raw": {
@@ -9866,10 +9915,7 @@ export interface operations {
     createCoupon: {
         parameters: {
             query?: never;
-            header?: {
-                /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -10193,10 +10239,7 @@ export interface operations {
     createRedeemCodeBatch: {
         parameters: {
             query?: never;
-            header?: {
-                /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -11189,9 +11232,10 @@ export interface operations {
                      *           "attachments": [
                      *             {
                      *               "id": "01927c3e-8a41-701f-9d3e-5f6a7b8c001f",
+                     *               "filename": "speedtest.png",
                      *               "content_type": "image/png",
                      *               "bytes_size": 482133,
-                     *               "filename": "speedtest.png",
+                     *               "created_at": "2026-09-21T22:09:40+08:00",
                      *               "download_path": "/v1/support/attachments/01927c3e-8a41-701f-9d3e-5f6a7b8c001f"
                      *             }
                      *           ],
@@ -11395,9 +11439,10 @@ export interface operations {
                     /**
                      * @example {
                      *       "id": "01927c3e-8a41-701f-9d3e-5f6a7b8c001f",
+                     *       "filename": "speedtest.png",
                      *       "content_type": "image/png",
                      *       "bytes_size": 482133,
-                     *       "filename": "speedtest.png",
+                     *       "created_at": "2026-09-21T22:09:40+08:00",
                      *       "download_path": "/v1/support/attachments/01927c3e-8a41-701f-9d3e-5f6a7b8c001f"
                      *     }
                      */
@@ -11611,12 +11656,12 @@ export interface operations {
     deleteNotificationTemplate: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 通知模板（M4） ID */
@@ -11649,12 +11694,12 @@ export interface operations {
     updateNotificationTemplate: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 通知模板（M4） ID */
@@ -11948,6 +11993,7 @@ export interface operations {
                      *         "rate_bps": 1000,
                      *         "scope": "first_order",
                      *         "cap_minor": 5000,
+                     *         "currency": "CNY",
                      *         "freeze_days": 14,
                      *         "burst_threshold": 5
                      *       },
@@ -11972,12 +12018,12 @@ export interface operations {
     updateSettings: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path?: never;
             cookie?: never;
@@ -12024,6 +12070,7 @@ export interface operations {
                      *         "rate_bps": 1000,
                      *         "scope": "first_order",
                      *         "cap_minor": 5000,
+                     *         "currency": "CNY",
                      *         "freeze_days": 14,
                      *         "burst_threshold": 5
                      *       },
@@ -12152,9 +12199,14 @@ export interface operations {
     removeStaff: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /**
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
+                 */
+                "Audit-Reason"?: components["parameters"]["AuditReason"];
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
             };
             path: {
                 /** @description 管理员的账号 ID */
@@ -12162,16 +12214,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "reason": "员工离职"
-                 *     }
-                 */
-                "application/json": components["schemas"]["ReasonBody"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description 已完成 */
             204: {
@@ -12195,9 +12238,9 @@ export interface operations {
     updateStaff: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
             };
             path: {
                 /** @description 管理员的账号 ID */
@@ -12305,9 +12348,9 @@ export interface operations {
     createStaffInvitation: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
@@ -12394,9 +12437,14 @@ export interface operations {
     revokeStaffInvitation: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /**
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
+                 */
+                "Audit-Reason"?: components["parameters"]["AuditReason"];
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
             };
             path: {
                 /** @description 邀请 ID */
@@ -12404,16 +12452,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "reason": "邮箱填写错误"
-                 *     }
-                 */
-                "application/json": components["schemas"]["ReasonBody"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description 已完成 */
             204: {
@@ -12497,9 +12536,9 @@ export interface operations {
     createRole: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
@@ -12596,14 +12635,19 @@ export interface operations {
     deleteRole: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：UTF-8 百分号编码，解码后 1 到 500 个字符；缺少或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
+                 * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
+                 */
+                "Audit-Reason"?: components["parameters"]["AuditReason"];
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
+                /**
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 角色名 */
@@ -12611,16 +12655,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "reason": "财务岗位撤销"
-                 *     }
-                 */
-                "application/json": components["schemas"]["ReasonBody"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description 已完成 */
             204: {
@@ -12645,14 +12680,14 @@ export interface operations {
     updateRole: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /**
-                 * @description 资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
+                 * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
                  * @example "p-4f1c9a2e"
                  */
-                "If-Match": components["parameters"]["IfMatch"];
+                "If-Match"?: components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description 角色名 */
@@ -12890,9 +12925,9 @@ export interface operations {
     createAuditExport: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）；缺少或过期返回 401 `mfa_required`。 */
-                "Mfa-Assertion": components["parameters"]["MfaAssertion"];
+            header?: {
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };

@@ -1249,7 +1249,7 @@ export interface components {
          * @description `errors[].code`，取值见 spec/02 CONV-16
          * @enum {string}
          */
-        FieldErrorCode: "required" | "invalid_format" | "too_short" | "too_long" | "out_of_range" | "not_allowed" | "invalid_code" | "incorrect" | "expired" | "exhausted";
+        FieldErrorCode: "required" | "invalid_format" | "too_short" | "too_long" | "out_of_range" | "not_allowed" | "invalid_code" | "incorrect" | "expired" | "exhausted" | "taken";
         OAuthErrorBody: {
             /** @enum {string} */
             error: "invalid_request" | "invalid_client" | "invalid_grant" | "unsupported_grant_type" | "authorization_pending" | "slow_down" | "access_denied" | "expired_token";
@@ -1413,7 +1413,7 @@ export interface components {
                 };
                 /** Format: int64 */
                 announcement_version: number;
-                /** @description 运营模块开关（OPS-08） */
+                /** @description 运营模块开关（OPS-08）。键名由 spec/13 OPS-08 规定，是 CONV-10 布尔字段须以 `is_`/`has_` 开头的例外。 */
                 features: {
                     announcements: boolean;
                     articles: boolean;
@@ -1711,14 +1711,20 @@ export interface components {
              */
             mode: "auto" | "downgrade_immediate";
             coupon_code?: string;
-            /** @default true */
-            use_credit: boolean;
+            /**
+             * @description 是否用余额抵扣（预估额见 `Quote.credit_applied_minor`，以下单时冻结为准，ORD-15）
+             * @default true
+             */
+            is_credit_applied: boolean;
         } | {
             /** Format: uuid */
             addon_price_id: string;
             coupon_code?: string;
-            /** @default true */
-            use_credit: boolean;
+            /**
+             * @description 是否用余额抵扣（预估额见 `Quote.credit_applied_minor`，以下单时冻结为准，ORD-15）
+             * @default true
+             */
+            is_credit_applied: boolean;
         };
         /**
          * @description 购买场景（ORD-01）
@@ -1981,9 +1987,18 @@ export interface components {
         Attachment: {
             /** Format: uuid */
             id: string;
-            /** @enum {string} */
+            /** @description 上传时 multipart 分段的文件名（已去除路径与控制字符）；下载时用于 `Content-Disposition` */
+            filename: string;
+            /**
+             * @description 按文件内容识别的类型（OPS-10）
+             * @enum {string}
+             */
             content_type: "image/png" | "image/jpeg" | "image/webp";
-            size_bytes: number;
+            /**
+             * Format: int64
+             * @description 文件字节数
+             */
+            bytes_size: number;
             /** Format: date-time */
             created_at: string;
         };
@@ -5136,8 +5151,9 @@ export interface operations {
                      *           "attachments": [
                      *             {
                      *               "id": "0192f0c4-cc00-7000-8000-0000000d0001",
+                     *               "filename": "alipay-receipt.png",
                      *               "content_type": "image/png",
-                     *               "size_bytes": 184320,
+                     *               "bytes_size": 184320,
                      *               "created_at": "2026-10-01T10:09:30+08:00"
                      *             }
                      *           ],
@@ -5299,8 +5315,9 @@ export interface operations {
                     /**
                      * @example {
                      *       "id": "0192f0c4-cc00-7000-8000-0000000d0001",
+                     *       "filename": "alipay-receipt.png",
                      *       "content_type": "image/png",
-                     *       "size_bytes": 184320,
+                     *       "bytes_size": 184320,
                      *       "created_at": "2026-10-01T10:09:30+08:00"
                      *     }
                      */
@@ -5334,7 +5351,7 @@ export interface operations {
                 headers: {
                     /**
                      * @description 恒为 `attachment`
-                     * @example attachment; filename="0192f0c4-cc00-7000-8000-0000000d0001.png"
+                     * @example attachment; filename="alipay-receipt.png"
                      */
                     "Content-Disposition"?: string;
                     /**
