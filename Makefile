@@ -91,12 +91,12 @@ check-spdx:
 vulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
-# 依赖许可证扫描（spec/42 42.2，Apache-2.0 仓库的允许清单）。本模块自身不参与判定。
+# 依赖许可证扫描（spec/42 42.2，Apache-2.0 仓库的允许清单）。本模块自身由根目录 LICENSE 识别为 Apache-2.0，一并检查。
 # 范围只含 Go 依赖：npm 工具（Redocly、openapi-typescript）只在构建期经 npx 使用，不进入产物，不在扫描范围内。
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC
 licenses:
 	go run github.com/google/go-licenses/v2@$(GO_LICENSES_VERSION) check ./... \
-	  --allowed_licenses=$(ALLOWED_LICENSES) --ignore github.com/akari-project/panel-spec
+	  --allowed_licenses=$(ALLOWED_LICENSES)
 
 breaking: breaking-proto breaking-openapi
 
