@@ -3692,6 +3692,11 @@ export interface components {
             /** @description 操作原因，写入审计日志（spec/10 AUTH-18） */
             reason: string;
         };
+        /**
+         * @description 自研客户端平台，与客户端接口的 `ClientPlatform` 相同
+         * @enum {string}
+         */
+        ClientPlatform: "ios" | "android" | "windows" | "macos" | "linux";
         Settings: {
             site_name: string;
             /** @enum {string} */
@@ -3709,6 +3714,18 @@ export interface components {
              * @enum {string}
              */
             proration_mode: "value" | "time_only";
+            /**
+             * @description 客户端最低版本（spec/30 API-03、API-10），键为平台，值为 `x.y.z`；没有列出的平台不限制。
+             *     不应高于该平台已发布的版本。平台或版本格式错误返回 `invalid_format`（`errors[].field` 如 `min_version.ios`）。
+             *     修改后 `/v1/config` 重新签名。
+             * @example {
+             *       "ios": "1.2.0",
+             *       "android": "1.2.0"
+             *     }
+             */
+            min_version: {
+                [key: string]: string;
+            };
             /** @description 运营模块开关，键名与 `/v1/config` 的 features 相同（OPS-08） */
             features: {
                 announcements?: boolean;
@@ -3773,6 +3790,18 @@ export interface components {
              * @enum {string}
              */
             proration_mode?: "value" | "time_only";
+            /**
+             * @description 客户端最低版本（spec/30 API-03、API-10），键为平台，值为 `x.y.z`；没有列出的平台不限制。
+             *     不应高于该平台已发布的版本。平台或版本格式错误返回 `invalid_format`（`errors[].field` 如 `min_version.ios`）。
+             *     修改后 `/v1/config` 重新签名。
+             * @example {
+             *       "ios": "1.2.0",
+             *       "android": "1.2.0"
+             *     }
+             */
+            min_version?: {
+                [key: string]: string;
+            };
             /** @description 运营模块开关，键名与 `/v1/config` 的 features 相同（OPS-08） */
             features?: {
                 announcements?: boolean;
@@ -12021,6 +12050,10 @@ export interface operations {
                      *       "free_device_limit": 1,
                      *       "free_plan_id": null,
                      *       "proration_mode": "value",
+                     *       "min_version": {
+                     *         "ios": "1.2.0",
+                     *         "android": "1.2.0"
+                     *       },
                      *       "features": {
                      *         "announcements": true,
                      *         "articles": true,
@@ -12099,6 +12132,10 @@ export interface operations {
                      *       "free_device_limit": 1,
                      *       "free_plan_id": null,
                      *       "proration_mode": "value",
+                     *       "min_version": {
+                     *         "ios": "1.2.0",
+                     *         "android": "1.2.0"
+                     *       },
                      *       "features": {
                      *         "announcements": true,
                      *         "articles": true,

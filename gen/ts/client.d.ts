@@ -13,8 +13,11 @@ export interface paths {
         };
         /**
          * 客户端启动配置（已签名）
-         * @description 返回最低版本、公告版本、功能开关与备用域名。`signature` 为 Ed25519 签名，签名对象是 `payload` 按
-         *     RFC 8785（JCS）规范化后的 UTF-8 字节；`key_id` 标识签名密钥，客户端内置当前与下一把公钥（CONV-30）。
+         * @description 返回最低版本、公告版本、功能开关与接口地址。`signature` 为 Ed25519 签名，签名对象是 `payload` 按
+         *     RFC 8785（JCS）规范化后的 UTF-8 字节；`key_id` 标识签名密钥（十进制字符串），客户端内置当前与下一把公钥（CONV-30）。
+         *
+         *     签名是确定性的：相同 payload 在各副本得到相同的文档与 ETag。客户端只接受 `issued_at` 不早于上次已接受值的文档（防回滚），
+         *     否则继续使用旧文档。本接口永不返回 426，旧客户端仍能取得最低版本（API-03、API-10）。
          */
         get: operations["getConfig"];
         put?: never;
@@ -508,7 +511,9 @@ export interface paths {
         put?: never;
         /**
          * 开始绑定 TOTP
-         * @description 返回待确认的密钥；调用 `POST /v1/me/mfa/totp/activation` 提交一次验证码后才生效。已启用时返回 409 `invalid_state`。
+         * @description 需要重新验证（AUTH-23）。返回待确认的密钥；调用 `POST /v1/me/mfa/totp/activation` 提交一次验证码后才生效。
+         *     待确认的密钥绑定发起本请求的会话，确认必须来自同一会话；再次调用时旧的待确认密钥作废（AUTH-11）。
+         *     已启用时返回 409 `invalid_state`。
          */
         post: operations["startTotpEnrollment"];
         /**
@@ -1424,11 +1429,14 @@ export interface components {
         };
         SignedConfig: {
             payload: {
-                /** @description 按平台的最低版本（API-03） */
+                /** @description 按平台的最低版本（API-03），值为 `x.y.z`；没有列出的平台不限制 */
                 min_version: {
                     [key: string]: string;
                 };
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description 公告版本，单调不减；生效中的公告集合可能变化时增大，客户端据此重新拉取公告（spec/13）。公告模块实现前为 0
+                 */
                 announcement_version: number;
                 /**
                  * @description 注册策略（spec/10 AUTH-02）。用户中心据此隐藏注册入口或显示邀请码输入框；缺省时按 `open` 处理，
@@ -1444,9 +1452,15 @@ export interface components {
                     referrals: boolean;
                     diagnostics: boolean;
                 };
-                /** @description 主域名与备用域名 */
+                /**
+                 * @description 接口根地址（不含 `/v1` 与末尾的 `/`，可以带路径前缀，与 DEP-04 的 `api_base_url` 相同）。
+                 *     第一项为主地址，其后为部署者配置的备用地址（API-10）。
+                 */
                 api_endpoints: string[];
-                /** Format: date-time */
+                /**
+                 * Format: date-time
+                 * @description 相关设置最后一次修改的时刻；客户端只接受不早于上次已接受值的文档（防回滚，API-10）
+                 */
                 issued_at: string;
             };
             /**
@@ -2408,6 +2422,11 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    /**
+                     * @description `no-cache`：可以缓存，但每次使用前须以 ETag 重新验证（API-10）
+                     * @example no-cache
+                     */
+                    "Cache-Control"?: string;
                     ETag: components["headers"]["ETag"];
                     [name: string]: unknown;
                 };
@@ -2438,7 +2457,7 @@ export interface operations {
                      *         "issued_at": "2026-10-01T10:00:00+08:00"
                      *       },
                      *       "signature": "3q2+7w8Jb1l0m9Kp3yVZ4aQeX2nR6tUoHcFgWjD5sLkP0vN1iE8rT7yB4uA2zC9xM6qS3hG5fJ1dK0wL8oY7eQ==",
-                     *       "key_id": "cfg-2026-01"
+                     *       "key_id": "1"
                      *     }
                      */
                     "application/json": components["schemas"]["SignedConfig"];
@@ -3576,7 +3595,7 @@ export interface operations {
                     };
                 };
             };
-            401: components["responses"]["Unauthenticated"];
+            401: components["responses"]["MfaRequired"];
             409: components["responses"]["InvalidState"];
             default: components["responses"]["Problem"];
         };

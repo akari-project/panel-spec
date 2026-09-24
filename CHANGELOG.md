@@ -3,6 +3,28 @@
 
 格式遵循 spec/42 42.5：每个版本分为新增、变更、修复、安全四部分。1.0 之前的小版本允许破坏性变更，但必须在此说明迁移方法（ENG-04）。
 
+## v0.5.0（M1-01 后续：重新验证范围与 /v1/config 的生成规则）
+
+相对 v0.4.0。依据 workspace spec/10 AUTH-11、AUTH-23，spec/30 API-03、API-10，spec/02 CONV-30，spec/03 3.6，以及评审记录 `review/m1-01-followups-debate-2026-09-24.md`。含语义变更（开始绑定 TOTP 需要重新验证），按 ENG-04 升小版本。最低契约版本为 v0.5.0。
+
+### 新增
+- 管理接口 `Settings.min_version`（响应必有，默认 `{}`）与 `SettingsUpdate.min_version`（可选）：按平台的客户端最低版本，值为 `x.y.z`；新增 `ClientPlatform` 定义，与客户端接口相同。
+- 客户端接口 `GET /v1/config` 的 200 响应列出 `Cache-Control: no-cache`。
+
+### 变更（破坏性）
+- `POST /v1/me/mfa/totp`（`startTotpEnrollment`）需要重新验证（AUTH-23），401 改为引用 `MfaRequired`；待确认的密钥绑定发起会话，确认必须来自同一会话（AUTH-11）。迁移：客户端收到 401 `mfa_required` 时调用 `POST /v1/me/reauthentications` 后重试，与停用 TOTP 相同；以密码登录后 5 分钟内视为已重新验证，新用户登录后立即绑定不受影响。
+
+### 修复
+- `getConfig` 的描述写明：`key_id` 为十进制字符串（示例由 `cfg-2026-01` 改为 `1`，与 CONV-30 的 `PANEL_CONFIG_KEY` 一致）；签名确定、各副本 ETag 一致；客户端按 `issued_at` 防回滚；本接口永不返回 426。
+- `payload.api_endpoints` 写明为接口根地址（与 DEP-04 的 `api_base_url` 相同，可以带路径前缀），第一项为主地址；`announcement_version` 写明语义；`min_version` 写明未列出的平台不限制。
+- 两份 OpenAPI 的 `info.version` 改为 0.5.0。
+
+### 安全
+- 开始绑定 TOTP 需要重新验证，并绑定发起会话：被盗的会话不能为账号绑定攻击者的验证器而把所有者锁在外面。
+- `/v1/config` 的防回滚规则写入契约：客户端不接受 `issued_at` 早于已接受值的旧签名文档。
+
+能否在线执行：可以，不涉及 proto 与数据库。控制面与用户中心嵌入同一二进制，同时升级；部署需新增环境变量 `PANEL_CONFIG_KEY`（CONV-30），实现 `GET /v1/config` 的版本起 api 角色缺少时拒绝启动。
+
 ## v0.4.0（M1-01 后续：浏览器刷新响应、SMTP 加密模式、设备签名域分隔）
 
 相对 v0.3.0。依据 workspace spec/10 AUTH-08、AUTH-10、AUTH-23、AUTH-24 与 spec/03 3.6，以及评审记录 `review/panel-spec-v0.4.0-debate-2026-09-24.md`。含语义变更，按 ENG-04 升小版本。最低契约版本为 v0.4.0。
