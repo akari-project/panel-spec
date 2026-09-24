@@ -13,6 +13,7 @@
 - `tools/schemagen`：入站 schema 的生成源。组合矩阵在 `matrix.go`（抄自 spec/21 21.2），字段在 `main.go`。
 - `tools/checkapi`：OpenAPI 检查：每个操作有响应示例、禁用词（spec/30 API-01）、管理接口 `x-permission`（目录硬编码，来源 spec/10 AUTH-17，规格变更时同步）。
 - `tools/checkschema`：校验 schema 合法、文件名与 proto 枚举一致、无禁用词与凭据字段、示例通过校验；`testdata/invalid/` 为必须被拒绝的实例。
+- `LICENSE`：Apache-2.0 全文，与 `LICENSES/Apache-2.0.txt` 相同，供 go-licenses 等只认根目录许可证文件的工具识别。
 - `REUSE.toml`、`LICENSES/`：REUSE 登记。新源文件在前两行内写 SPDX 许可证标识（Apache-2.0，CONV-25）。
 
 ## 命令

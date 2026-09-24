@@ -3,6 +3,11 @@
 
 格式遵循 spec/42 42.5：每个版本分为新增、变更、修复、安全四部分。1.0 之前的小版本允许破坏性变更，但必须在此说明迁移方法（ENG-04）。
 
+## 未发布
+
+### 新增
+- 根目录 `LICENSE`：Apache-2.0 全文，与 `LICENSES/Apache-2.0.txt` 相同。go-licenses 只从模块根目录的许可证文件识别许可证，此前无法识别本模块；`make licenses` 不再忽略本模块。
+
 ## v0.2.0（M0-04 审计后的修订）
 
 相对 v0.1.0。依据 node-agent FORK_PLAN（M0-04）第 6 节与 workspace spec/21 AGT-15、spec/23。含破坏性变更，按 ENG-04 升为小版本。
