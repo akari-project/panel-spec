@@ -2,6 +2,7 @@
   "transport": "mkcp",
   "mkcp": {
     "finalmask": {
+      "header": "header-dns",
       "obfs": {
         "type": "mkcp-original"
       }

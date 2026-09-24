@@ -1,6 +1,11 @@
 {
   "transport": "mkcp",
   "mkcp": {
-    "mtu": 9000
+    "mtu": 9000,
+    "finalmask": {
+      "obfs": {
+        "type": "mkcp-original"
+      }
+    }
   }
 }

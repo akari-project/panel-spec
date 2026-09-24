@@ -1,9 +1,11 @@
 {
   "transport": "mkcp",
   "mkcp": {
+    "seed": "k7q2xm-seed",
     "finalmask": {
       "obfs": {
-        "type": "mkcp-original"
+        "type": "mkcp-aes128gcm",
+        "key": "k7q2xm-seed"
       }
     }
   }

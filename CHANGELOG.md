@@ -3,6 +3,43 @@
 
 格式遵循 spec/42 42.5：每个版本分为新增、变更、修复、安全四部分。1.0 之前的小版本允许破坏性变更，但必须在此说明迁移方法（ENG-04）。
 
+## v0.2.0（M0-04 审计后的修订）
+
+相对 v0.1.0。依据 node-agent FORK_PLAN（M0-04）第 6 节与 workspace spec/21 AGT-15、spec/23。含破坏性变更，按 ENG-04 升为小版本。
+
+### 新增
+- `Credential.ss2022_key_16`（字段 7）与 `Credential.ss2022_key_32`（字段 8）：Shadowsocks 2022 用户密钥的原始字节，由控制面从 `secret` 经 HKDF-SHA256 生成，Agent 只做 base64 编码。
+- `testdata/node-v1-vectors.json` 新增 `credential`：`secret` 的 uuid_text、两把 SS2022 用户密钥（原始字节与 base64），以及 SIP022 客户端密码的完整示例（`ss2022_client`：`inbound_key + ":" + base64(用户密钥)`）。
+- mKCP 的 `mkcp.finalmask`（必填）：`header`（可选，`header-srtp`、`header-utp`、`header-wechat`、`header-dtls`、`header-wireguard`）与 `obfs`（必填，`mkcp-original`，或 `mkcp-aes128gcm` 加 `key`）。Agent 按 `[header, obfs]` 的顺序写入 Xray-core 的 `streamSettings.finalmask.udp`，对照用例见 `testdata/mkcp-finalmask.json`（`tools/checkschema` 测试）。
+
+### 变更
+- `Credential` 注释写明一条凭据施加于节点的全部入站，凭据消息不带入站 tag（spec/21 21.3、AGT-15）。
+- `ReportStatus.kernel_error` 注释写明凭据校验失败的格式 `credential <id>: invalid length`（多条以分号分隔）与清空条件。
+- mKCP 的 `read_buffer_mb`、`write_buffer_mb` 说明中写明单位为 MiB（spec/02 CONV-33）。
+
+### 变更（破坏性）
+
+proto（线上编码与字段编号不变，`buf breaking` 通过；破坏性在于语义收窄）：
+- `Credential.secret`（字段 3）限定为 16 字节原始 UUIDv4（原注释为“按协议解释：UUID、密码等”），并作为 SS2022 用户密钥派生的输入。各协议使用的形式（uuid_text、SS2022 用户密钥）写在 `Credential` 注释中，两个内核一致。`secret` 长度不是 16 字节，或 `ss2022_key_16`、`ss2022_key_32` 为空或长度错误时，Agent 不把该凭据加入任何入站，并在 `ReportStatus.kernel_error` 中报告凭据 ID。
+- 迁移：
+  - 控制面：改为保存和下发 16 字节原始值；已有 `proxy_credentials.secret_enc` 若为 36 字符 UUID 文本，读取时解析为 16 字节，或用一次性任务重新加密。当前只有 `panel admin create` 生成的共用凭据受影响（workspace backlog M1-03 已登记后续任务）。
+  - Agent：按 `Credential` 注释实现编码与长度校验。没有已发布的旧 Agent。
+- 能否在线执行：可以。解析兼容两种形式，不改表结构；重新加密为逐行 UPDATE（spec/40 DEP-12）。
+
+schema：
+- `vless-mkcp`、`vmess-mkcp` 删除 `mkcp.header_type` 与 `mkcp.seed`；`mkcp` 与 `mkcp.finalmask.obfs` 改为必填，没有隐式默认值。当前 Xray-core（本组织 fork `infra/conf/transport_internet.go`）在配置中出现 mKCP 的 `header` 或 `seed` 时拒绝加载，按旧字段下发的入站无法启动。
+- 迁移：
+  - `header_type`：`none` 改为省略 `finalmask.header`；`srtp`、`utp`、`dtls`、`wireguard` 改为 `header-` 加原值；`wechat-video` 改为 `header-wechat`；
+  - `seed`：有值时改为 `finalmask.obfs = {"type": "mkcp-aes128gcm", "key": <原 seed>}`，没有值时改为 `{"type": "mkcp-original"}`（与旧版默认行为相同）；
+- 能否在线执行：可以。控制面尚无已保存的 mKCP 入站，不需要数据迁移；若有，按上述规则逐行改写 `inbounds.settings`。
+
+### 兼容性
+- 不新增能力位，理由：
+  - 没有已发布的 v0.1.0 Agent，不存在需要区分对待的旧节点；
+  - 新增字段是纯数据，控制面总是填写，proto3 接收方忽略未知字段，不改变任何消息的收发条件（ENG-01 的“新行为配能力位”针对可选行为，本版没有可选行为）；
+  - Agent 的最低契约版本为 v0.2.0。
+- 最低契约版本（ENG-03）：控制面与 Agent 都必须基于 v0.2.0 或更高版本实现；`panel` 与 `node-agent` README 的兼容矩阵同步写明，v0.1.0 标记为不受支持。
+
 ## v0.1.0（M0-03 契约定稿）
 
 相对起步包种子版本。

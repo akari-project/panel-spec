@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command vectors 按 proto/node/v1 注释中的字节级定义，生成握手、会话加密、DNS 凭据加密、
-// 快照校验和与 Agent 升级签名的测试向量。
+// 快照校验和、Agent 升级签名与代理凭据各协议形式的测试向量。
 // 模拟 Agent 与真实 Agent 都必须通过这些向量（spec/20 20.6）。
 //
 // 用法：go run ./tools/vectors > testdata/node-v1-vectors.json
@@ -11,6 +11,7 @@ import (
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -181,9 +182,28 @@ func main() {
 		panic("ed25519 verify failed")
 	}
 
+	// 代理凭据的各协议形式（messages.proto Credential）：secret 为 UUIDv4，
+	// SS2022 用户密钥由 secret 经 HKDF-SHA256 生成。
+	credSecret, _ := hex.DecodeString("3f2a8c1e5b7d4e9fa0c3d5e7f9112233")
+	if credSecret[6]>>4 != 4 || credSecret[8]>>6 != 0b10 {
+		panic("credential secret is not UUIDv4")
+	}
+	credHex := hex.EncodeToString(credSecret)
+	credUUIDText := credHex[0:8] + "-" + credHex[8:12] + "-" + credHex[12:16] + "-" + credHex[16:20] + "-" + credHex[20:32]
+	ssKey16 := make([]byte, 16)
+	_, err = io.ReadFull(hkdf.New(sha256.New, credSecret, nil, []byte("akari-ss2022-user-key-16-v1")), ssKey16)
+	must(err)
+	ssKey32 := make([]byte, 32)
+	_, err = io.ReadFull(hkdf.New(sha256.New, credSecret, nil, []byte("akari-ss2022-user-key-32-v1")), ssKey32)
+	must(err)
+
+	// SIP022 多用户的客户端密码：settings.inbound_key（原样，已是 base64）+ ":" + base64(用户密钥)。
+	inboundKey16 := base64.StdEncoding.EncodeToString(fill(16, 0xd0))
+	inboundKey32 := base64.StdEncoding.EncodeToString(fill(32, 0xd0))
+
 	h := hex.EncodeToString
 	out := map[string]any{
-		"description": "node.v1 握手、会话加密、DNS 凭据加密、快照校验和与 Agent 升级签名的测试向量，定义见 proto/node/v1/envelope.proto 与 messages.proto 的注释。所有字节串为十六进制；agent_upgrade 的私钥种子只用于测试。",
+		"description": "node.v1 握手、会话加密、DNS 凭据加密、快照校验和、Agent 升级签名与代理凭据各协议形式的测试向量，定义见 proto/node/v1/envelope.proto 与 messages.proto 的注释。所有字节串为十六进制（credential 中以 _text、_b64 结尾的字段与 ss2022_client 除外）；agent_upgrade 的私钥种子只用于测试。",
 		"inputs": map[string]any{
 			"psk":                     h(psk),
 			"node_id":                 nodeIDText,
@@ -236,6 +256,24 @@ func main() {
 			"sha256":          h(upgradeDigest),
 			"signature_input": h(upgradeInput),
 			"signature":       h(upgradeSig),
+		},
+		"credential": map[string]any{
+			"secret":            h(credSecret),
+			"uuid_text":         credUUIDText,
+			"ss2022_key_16":     h(ssKey16),
+			"ss2022_key_32":     h(ssKey32),
+			"ss2022_key_16_b64": base64.StdEncoding.EncodeToString(ssKey16),
+			"ss2022_key_32_b64": base64.StdEncoding.EncodeToString(ssKey32),
+			"ss2022_client": map[string]any{
+				"2022-blake3-aes-128-gcm": map[string]any{
+					"inbound_key":     inboundKey16,
+					"client_password": inboundKey16 + ":" + base64.StdEncoding.EncodeToString(ssKey16),
+				},
+				"2022-blake3-aes-256-gcm": map[string]any{
+					"inbound_key":     inboundKey32,
+					"client_password": inboundKey32 + ":" + base64.StdEncoding.EncodeToString(ssKey32),
+				},
+			},
 		},
 		"sync_full": map[string]any{
 			"snapshot": h(snapshotRaw),
