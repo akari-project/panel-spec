@@ -47,8 +47,8 @@ type Frame struct {
 	//	*Frame_Sealed
 	//	*Frame_HelloReject
 	Kind isFrame_Kind `protobuf_oneof:"kind"`
-	// 握手帧（hello、hello_ack、hello_reject）为 0。之后会话内每个方向从 1 开始递增；
-	// 重复或不递增即关闭连接（spec/20 NODE-12）。
+	// 握手帧（hello、hello_ack、hello_reject）为 0。之后会话内每个方向从 1 开始，每帧必须恰好比上一帧大 1；
+	// 重复、不递增或跳号均为协议错误，以 WebSocket 关闭码 1002 关闭连接（spec/20 NODE-12）。
 	Seq           uint64 `protobuf:"varint,4,opt,name=seq,proto3" json:"seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

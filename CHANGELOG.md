@@ -8,6 +8,11 @@
 ### 新增
 - 根目录 `LICENSE`：Apache-2.0 全文，与 `LICENSES/Apache-2.0.txt` 相同。go-licenses 只从模块根目录的许可证文件识别许可证，此前无法识别本模块；`make licenses` 不再忽略本模块。
 
+### 变更
+- 注释修订，字段与线上编码不变（依据 workspace spec/20 M0-07 澄清）：
+  - `Frame.seq`：每帧必须恰好比上一帧大 1，重复、不递增或跳号均为协议错误，以 WebSocket 关闭码 1002 关闭（NODE-12）。
+  - `messages.proto` 文件头与 `SyncDelta`：`SyncDelta` 单列应用条件，`to_version` 不大于本地只确认，`from_version` 等于本地才应用，其余请求全量同步（NODE-23）；“等于本地 + 1”只适用于 `CredUpsert`、`CredRemove`、`InboundApply`、`RoutesApply`。
+
 ## v0.2.0（M0-04 审计后的修订）
 
 相对 v0.1.0。依据 node-agent FORK_PLAN（M0-04）第 6 节与 workspace spec/21 AGT-15、spec/23。含破坏性变更，按 ENG-04 升为小版本。
