@@ -3,6 +3,33 @@
 
 格式遵循 spec/42 42.5：每个版本分为新增、变更、修复、安全四部分。1.0 之前的小版本允许破坏性变更，但必须在此说明迁移方法（ENG-04）。
 
+## v0.4.0（M1-01 后续：浏览器刷新响应、SMTP 加密模式、设备签名域分隔）
+
+相对 v0.3.0。依据 workspace spec/10 AUTH-08、AUTH-10、AUTH-23、AUTH-24 与 spec/03 3.6，以及评审记录 `review/panel-spec-v0.4.0-debate-2026-09-24.md`。含语义变更，按 ENG-04 升小版本。最低契约版本为 v0.4.0。
+
+### 新增
+- 客户端接口 `CookieTokenRefresh`：浏览器刷新令牌的响应，只含 `token_type`、`expires_in`、`device_id`，令牌只以 Cookie 下发（AUTH-08）。
+- 管理接口 `settings.smtp.tls`（`starttls`、`implicit`、`none`，缺省 `starttls`）：连接加密方式，支持端口 465 的隐式 TLS。端口 465 与 `starttls`、`none` 与 `username` 的组合在保存时返回 `not_allowed`。
+
+### 变更（破坏性）
+- `POST /v1/oauth/token` 的 200 响应改为 `oneOf [TokenPair, CookieTokenRefresh]`；`TokenPair` 本身不变。迁移：浏览器客户端改用 `CookieTokenRefresh`，不再读取响应体中的令牌。
+- 设备证明 `DeviceInfo.device_proof.signature` 的签名对象由 nonce 改为 `akari-device-proof-v1|<device_id>|<nonce>`；扫码批准 `device_signature` 的签名对象由 `{id}.{check_digits}` 改为 `akari-device-link-approval-v1|<id>|<check_digits>`。两种签名以前缀做域分隔，UUID 用小写规范写法。迁移：自研客户端尚未发布，直接切换，不提供旧格式过渡。
+- SMTP 缺省由“服务器支持时使用 STARTTLS”改为“要求 STARTTLS”。迁移：已有站点的 SMTP 服务器必须支持 STARTTLS，或把 `tls` 设为 `implicit`；开发环境的 Mailpit 显式设为 `none`。
+
+### 修复
+- `Problem.challenge_id` 与 `methods` 写明：登录第二步必附 `challenge_id`，重新验证场景不附，`methods` 可为空数组（AUTH-23）。
+- 签名的编码写明为标准 base64（带填充）；扫码批准的示例签名改为 64 字节。
+- `DeviceInfo.public_key` 写明同一账号未吊销设备的公钥不得重复，冲突时返回 `not_allowed`（AUTH-10）。
+- 两份 OpenAPI 的 `info.version` 改为 0.4.0。
+
+### 安全
+- 设备密钥的两种签名（设备证明、扫码批准）以前缀做域分隔，同一签名不能在两种用途之间挪用。
+- SMTP 缺省要求加密：验证码与找回密码链接等安全类邮件不再因 STARTTLS 被剥离而以明文发送。
+
+能否在线执行：可以，不涉及 proto 与数据库。需要注意两点：
+- 浏览器刷新响应与签名格式的变化，要求控制面与用户中心同时升级（二者嵌入同一二进制）。
+- SMTP 缺省值变化后，服务器不支持 STARTTLS 的站点在把 `tls` 改为 `implicit` 或 `none` 之前无法投递邮件，应在升级前完成设置。
+
 ## v0.3.0（M1-01 开工前的契约修订）
 
 相对 v0.2.1。依据 workspace 的 M1-01 规格缺口评审（`review/m1-01-spec-gaps-2026-09-24.md`）与 spec/30、spec/10 AUTH-08。只新增可选字段，非破坏性；按 spec-change 的约定，新增字段升小版本。最低契约版本仍为 v0.2.0。
