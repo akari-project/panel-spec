@@ -1413,6 +1413,12 @@ export interface components {
                 };
                 /** Format: int64 */
                 announcement_version: number;
+                /**
+                 * @description 注册策略（spec/10 AUTH-02）。用户中心据此隐藏注册入口或显示邀请码输入框；缺省时按 `open` 处理，
+                 *     以服务端校验为准。不下发邮箱域名名单。修改后重新生成签名与 ETag（spec/30）。
+                 * @enum {string}
+                 */
+                registration_policy?: "open" | "invite_only" | "closed";
                 /** @description 运营模块开关（OPS-08）。键名由 spec/13 OPS-08 规定，是 CONV-10 布尔字段须以 `is_`/`has_` 开头的例外。 */
                 features: {
                     announcements: boolean;
@@ -1426,7 +1432,10 @@ export interface components {
                 /** Format: date-time */
                 issued_at: string;
             };
-            /** @description Ed25519 签名，对象为 `payload` 的 RFC 8785 规范化字节 */
+            /**
+             * @description Ed25519 签名，对象为 `payload` 的 RFC 8785 规范化字节。客户端按收到的原始 `payload`（含未知字段）规范化后验签，
+             *     不得先丢弃未知字段，否则新增可选字段（CONV-14）会使旧客户端验签失败。
+             */
             signature: string;
             key_id: string;
         };
@@ -2397,6 +2406,7 @@ export interface operations {
                      *           "linux": "1.1.0"
                      *         },
                      *         "announcement_version": 17,
+                     *         "registration_policy": "open",
                      *         "features": {
                      *           "announcements": true,
                      *           "articles": true,

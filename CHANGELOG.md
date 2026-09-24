@@ -3,6 +3,20 @@
 
 格式遵循 spec/42 42.5：每个版本分为新增、变更、修复、安全四部分。1.0 之前的小版本允许破坏性变更，但必须在此说明迁移方法（ENG-04）。
 
+## v0.3.0（M1-01 开工前的契约修订）
+
+相对 v0.2.1。依据 workspace 的 M1-01 规格缺口评审（`review/m1-01-spec-gaps-2026-09-24.md`）与 spec/30、spec/10 AUTH-08。只新增可选字段，非破坏性；按 spec-change 的约定，新增字段升小版本。最低契约版本仍为 v0.2.0。
+
+迁移：无。不涉及 proto 与数据库，控制面与用户中心可以按任意顺序升级，可以在线执行（spec/40 DEP-12）。
+
+### 新增
+- 客户端接口 `GET /v1/config` 的 `payload.registration_policy`（可选，`open`、`invite_only`、`closed`，spec/10 AUTH-02）：用户中心据此隐藏注册入口或显示邀请码输入框；缺省时按 `open` 处理。
+
+### 修复
+- 客户端接口 `cookie` 认证方式的描述与 AUTH-08 一致：`__Host-` Cookie 必须为 Path=/，刷新令牌 Cookie 随每个同源请求发送，服务端只在 `POST /v1/oauth/token` 读取它（原描述称“只随 `POST /v1/oauth/token` 发送”，浏览器无法做到）。
+- 两份 OpenAPI 的 `info.version` 改为 `0.3.0`，与发布版本一致（此前停留在 `0.1.0`）。管理接口本版只有描述变化，版本号随仓库发布版本统一。
+- 两份 OpenAPI 的 `cookie` 认证描述写明 Path=/；`SignedConfig.signature` 写明按原始 `payload`（含未知字段）规范化后验签。
+
 ## v0.2.1（M0-07 澄清与 LICENSE）
 
 相对 v0.2.0。依据 workspace spec/20 的 M0-07 澄清（akari-project/workspace#10）。只有注释与仓库文件变化，proto 字段、编号与线上编码不变，OpenAPI 与 JSON Schema 不变，非破坏性，按补丁版本发布；最低契约版本仍为 v0.2.0。
