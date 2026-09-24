@@ -8,7 +8,25 @@
     "signature_input": "00000016616b6172692d6167656e742d757067726164652d763100000005302e312e3100000020467f24fecbf10874b52294a383078117e423e64684004b8e264b2a3557291b70",
     "version": "0.1.1"
   },
-  "description": "node.v1 握手、会话加密、DNS 凭据加密、快照校验和与 Agent 升级签名的测试向量，定义见 proto/node/v1/envelope.proto 与 messages.proto 的注释。所有字节串为十六进制；agent_upgrade 的私钥种子只用于测试。",
+  "credential": {
+    "secret": "3f2a8c1e5b7d4e9fa0c3d5e7f9112233",
+    "ss2022_client": {
+      "2022-blake3-aes-128-gcm": {
+        "client_password": "0NHS09TV1tfY2drb3N3e3w==:v0lQY18eYC3Zyfw7E1XXOg==",
+        "inbound_key": "0NHS09TV1tfY2drb3N3e3w=="
+      },
+      "2022-blake3-aes-256-gcm": {
+        "client_password": "0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u8=:Cgg8q2iJDpyye0h8JXJeoIz2XC7hAQl3tuNcGIyxVkg=",
+        "inbound_key": "0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u8="
+      }
+    },
+    "ss2022_key_16": "bf4950635f1e602dd9c9fc3b1355d73a",
+    "ss2022_key_16_b64": "v0lQY18eYC3Zyfw7E1XXOg==",
+    "ss2022_key_32": "0a083cab68890e9cb27b487c25725ea08cf65c2ee1010977b6e35c188cb15648",
+    "ss2022_key_32_b64": "Cgg8q2iJDpyye0h8JXJeoIz2XC7hAQl3tuNcGIyxVkg=",
+    "uuid_text": "3f2a8c1e-5b7d-4e9f-a0c3-d5e7f9112233"
+  },
+  "description": "node.v1 握手、会话加密、DNS 凭据加密、快照校验和、Agent 升级签名与代理凭据各协议形式的测试向量，定义见 proto/node/v1/envelope.proto 与 messages.proto 的注释。所有字节串为十六进制（credential 中以 _text、_b64 结尾的字段与 ss2022_client 除外）；agent_upgrade 的私钥种子只用于测试。",
   "dns_secret": {
     "key": "ea202f1e0c7e97efb3b8cc66f263073fe5648e17c8fcd0e13facc21ea17fab5c",
     "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7",

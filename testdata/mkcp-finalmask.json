@@ -1,0 +1,25 @@
+{
+  "description": "mKCP 入站 settings 中的 mkcp.finalmask 与 Agent 应写入的 Xray-core streamSettings.finalmask.udp 的对照（schemas/inbound/vless-mkcp、vmess-mkcp）。udp 按数组顺序排列，第一个元素在最外层。",
+  "cases": [
+    {
+      "name": "original",
+      "finalmask": {"obfs": {"type": "mkcp-original"}},
+      "xray_udp": [{"type": "mkcp-original"}]
+    },
+    {
+      "name": "aes128gcm",
+      "finalmask": {"obfs": {"type": "mkcp-aes128gcm", "key": "k7q2xm-seed"}},
+      "xray_udp": [{"type": "mkcp-aes128gcm", "settings": {"password": "k7q2xm-seed"}}]
+    },
+    {
+      "name": "header-and-original",
+      "finalmask": {"header": "header-srtp", "obfs": {"type": "mkcp-original"}},
+      "xray_udp": [{"type": "header-srtp"}, {"type": "mkcp-original"}]
+    },
+    {
+      "name": "header-and-aes128gcm",
+      "finalmask": {"header": "header-wechat", "obfs": {"type": "mkcp-aes128gcm", "key": "k7q2xm-seed"}},
+      "xray_udp": [{"type": "header-wechat"}, {"type": "mkcp-aes128gcm", "settings": {"password": "k7q2xm-seed"}}]
+    }
+  ]
+}

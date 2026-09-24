@@ -1,0 +1,7 @@
+{
+  "transport": "mkcp",
+  "mkcp": {
+    "header_type": "wechat-video",
+    "seed": "k7q2xm-seed"
+  }
+}

@@ -4,8 +4,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -237,6 +239,73 @@ func TestInvalidInstances(t *testing.T) {
 			}
 			if err := sch.Validate(inst); err == nil {
 				t.Fatalf("%s should be rejected by %s.schema.json", f, combo)
+			}
+		})
+	}
+}
+
+// mkcpUDP 是 mkcp.finalmask 到 Xray-core streamSettings.finalmask.udp 的参考映射：
+// [header（若有）, obfs]，第一个元素在最外层。
+func mkcpUDP(fm map[string]any) []any {
+	var udp []any
+	if h, ok := fm["header"].(string); ok {
+		udp = append(udp, map[string]any{"type": h})
+	}
+	obfs := fm["obfs"].(map[string]any)
+	m := map[string]any{"type": obfs["type"]}
+	if k, ok := obfs["key"]; ok {
+		m["settings"] = map[string]any{"password": k}
+	}
+	return append(udp, m)
+}
+
+// TestMkcpFinalmaskCases：../../testdata/mkcp-finalmask.json 中每个用例都能通过两个 mKCP schema，
+// 并且按参考映射得到的 udp 与用例一致。
+func TestMkcpFinalmaskCases(t *testing.T) {
+	raw, err := os.ReadFile("../../testdata/mkcp-finalmask.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Cases []struct {
+			Name      string         `json:"name"`
+			Finalmask map[string]any `json:"finalmask"`
+			XrayUDP   []any          `json:"xray_udp"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Cases) == 0 {
+		t.Fatal("no cases")
+	}
+	c := jsonschema.NewCompiler()
+	c.AssertFormat()
+	var schemas []*jsonschema.Schema
+	for _, combo := range []string{"vless-mkcp", "vmess-mkcp"} {
+		sch, err := c.Compile(filepath.Join(realDir, combo+".schema.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		schemas = append(schemas, sch)
+	}
+	for _, tc := range doc.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			settings, err := json.Marshal(map[string]any{"transport": "mkcp", "mkcp": map[string]any{"finalmask": tc.Finalmask}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, sch := range schemas {
+				inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(settings))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := sch.Validate(inst); err != nil {
+					t.Fatalf("settings rejected: %v", err)
+				}
+			}
+			if got := mkcpUDP(tc.Finalmask); !reflect.DeepEqual(got, tc.XrayUDP) {
+				t.Fatalf("udp = %v, want %v", got, tc.XrayUDP)
 			}
 		})
 	}

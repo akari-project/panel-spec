@@ -28,15 +28,45 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// 代理凭据。一条凭据施加于该节点的全部入站：凭据消息（Snapshot.credentials、SyncDelta、
+// CredUpsert、CredRemove）不带入站 tag，Agent 把每条凭据加入节点上每个入站，移除时从每个入站移除
+// 并关闭其全部连接。内核适配器接口中的入站 tag 参数只在 Agent 内部使用（spec/21 21.3）。
+//
+// 各协议使用的形式全部由控制面生成并下发，Agent 只做下列编码，不做任何派生，两个内核一致：
+//   - UUID：secret 的 16 字节即 RFC 9562 UUID 的二进制形式（网络字节序）。
+//   - uuid_text：该 UUID 的 RFC 9562 标准文本形式，即 32 个小写十六进制数字按 8-4-4-4-12
+//     用连字符分隔，共 36 个 ASCII 字符，不带花括号或 urn:uuid: 前缀。
+//   - VLESS、VMess：用户 id 填 uuid_text；VMess 的 alterId 为 0（AEAD）。
+//   - Trojan、Hysteria2、AnyTLS：密码 = uuid_text。
+//   - TUIC：uuid 填 uuid_text，密码 = uuid_text。
+//   - Shadowsocks 非 2022 方式（aes-128-gcm、aes-256-gcm、chacha20-ietf-poly1305）：密码 = uuid_text。
+//   - Shadowsocks 2022：用户密钥 = 标准 base64（RFC 4648 §4，带填充）编码的 ss2022_key_16
+//     （2022-blake3-aes-128-gcm）或 ss2022_key_32（2022-blake3-aes-256-gcm）；
+//     入站主密钥在 Inbound.settings_json 的 inbound_key 中。
+//
+// 校验：secret 长度不是 16 字节，或 ss2022_key_16、ss2022_key_32 为空或长度不是 16、32 字节时，Agent 不把该凭据
+// 加入任何入站，同一消息中的其他凭据照常应用，并在 ReportStatus.kernel_error 中报告该凭据的 id
+// （格式见 ReportStatus.kernel_error，不含秘密值）。
+// 控制面的生成规则（Agent 不需要实现，导出配置时 spec/23 使用同一规则）：
+//   - secret 为 UUIDv4（RFC 9562 §5.4：122 位随机，版本与变体位已设置），创建凭据时生成，轮换时重新生成；
+//   - ss2022_key_16 = HKDF-SHA256(ikm = secret, salt = 空（等价于 32 个零字节）, info = "akari-ss2022-user-key-16-v1", L = 16)；
+//   - ss2022_key_32 = HKDF-SHA256(ikm = secret, salt = 空（等价于 32 个零字节）, info = "akari-ss2022-user-key-32-v1", L = 32)。
+//
+// 测试向量见 testdata/node-v1-vectors.json 的 credential。
 type Credential struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                  // proxy_credentials.id
-	AccountId      string                 `protobuf:"bytes,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`                   // 用于流量归属与租约
-	Secret         []byte                 `protobuf:"bytes,3,opt,name=secret,proto3" json:"secret,omitempty"`                                          // 按协议解释：UUID、密码等。节点本地保持加密形态（spec/21 AGT-05）
-	SpeedLimitMbps uint32                 `protobuf:"varint,4,opt,name=speed_limit_mbps,json=speedLimitMbps,proto3" json:"speed_limit_mbps,omitempty"` // 0 表示不限
-	ExpiresAtMs    int64                  `protobuf:"varint,5,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`          // 本地兜底：到期自动移除，并关闭连接（spec/20 NODE-24）
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Id        string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                // proxy_credentials.id
+	AccountId string                 `protobuf:"bytes,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"` // 用于流量归属与租约
+	// 16 字节，UUID 的二进制形式，各协议的用法见消息注释。节点本地保持加密形态（spec/21 AGT-05）
+	Secret         []byte `protobuf:"bytes,3,opt,name=secret,proto3" json:"secret,omitempty"`
+	SpeedLimitMbps uint32 `protobuf:"varint,4,opt,name=speed_limit_mbps,json=speedLimitMbps,proto3" json:"speed_limit_mbps,omitempty"` // 0 表示不限
+	ExpiresAtMs    int64  `protobuf:"varint,5,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`          // 本地兜底：到期自动移除，并关闭连接（spec/20 NODE-24）
 	// 仅第三方共用凭据：活跃来源数上限，0 表示不限（spec/22 ACC-12，M4-06）。
-	MaxSources    uint32 `protobuf:"varint,6,opt,name=max_sources,json=maxSources,proto3" json:"max_sources,omitempty"`
+	MaxSources uint32 `protobuf:"varint,6,opt,name=max_sources,json=maxSources,proto3" json:"max_sources,omitempty"`
+	// Shadowsocks 2022 用户密钥的原始字节，长度分别为 16 与 32，由控制面按消息注释的规则生成，
+	// 每条凭据都填写。节点本地与 secret 一样保持加密形态（spec/21 AGT-05）。
+	Ss2022Key_16  []byte `protobuf:"bytes,7,opt,name=ss2022_key_16,json=ss2022Key16,proto3" json:"ss2022_key_16,omitempty"`
+	Ss2022Key_32  []byte `protobuf:"bytes,8,opt,name=ss2022_key_32,json=ss2022Key32,proto3" json:"ss2022_key_32,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -111,6 +141,20 @@ func (x *Credential) GetMaxSources() uint32 {
 		return x.MaxSources
 	}
 	return 0
+}
+
+func (x *Credential) GetSs2022Key_16() []byte {
+	if x != nil {
+		return x.Ss2022Key_16
+	}
+	return nil
+}
+
+func (x *Credential) GetSs2022Key_32() []byte {
+	if x != nil {
+		return x.Ss2022Key_32
+	}
+	return nil
 }
 
 type Inbound struct {
@@ -258,7 +302,7 @@ type Snapshot struct {
 	// 控制面为该节点选定的内核；与当前不同时 Agent 先切换内核再应用入站（spec/21 AGT-07）。
 	Kernel      KernelType    `protobuf:"varint,2,opt,name=kernel,proto3,enum=node.v1.KernelType" json:"kernel,omitempty"`
 	Inbounds    []*Inbound    `protobuf:"bytes,3,rep,name=inbounds,proto3" json:"inbounds,omitempty"`
-	Credentials []*Credential `protobuf:"bytes,4,rep,name=credentials,proto3" json:"credentials,omitempty"`
+	Credentials []*Credential `protobuf:"bytes,4,rep,name=credentials,proto3" json:"credentials,omitempty"` // 每条凭据施加于全部入站（见 Credential）
 	RoutesJson  []byte        `protobuf:"bytes,5,opt,name=routes_json,json=routesJson,proto3" json:"routes_json,omitempty"`
 	// 以 K_dns = HKDF-SHA256(ikm = PSK, salt = 空（等价于 32 个零字节）, info = "akari-dns-secret-v1", L = 32)
 	// 做 XChaCha20-Poly1305 加密，附加数据为空：nonce(24) || 密文与 tag（spec/20 NODE-25）。
@@ -1125,9 +1169,13 @@ type ReportStatus struct {
 	ConfigVersion  uint64                 `protobuf:"varint,8,opt,name=config_version,json=configVersion,proto3" json:"config_version,omitempty"` // 已成功应用的版本
 	Inbounds       []*InboundHealth       `protobuf:"bytes,9,rep,name=inbounds,proto3" json:"inbounds,omitempty"`
 	RunningKernel  KernelType             `protobuf:"varint,10,opt,name=running_kernel,json=runningKernel,proto3,enum=node.v1.KernelType" json:"running_kernel,omitempty"`
-	KernelError    string                 `protobuf:"bytes,11,opt,name=kernel_error,json=kernelError,proto3" json:"kernel_error,omitempty"` // 最近一次内核切换或入站应用失败的原因；成功后清空
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// 最近一次内核切换或入站应用失败的原因，成功后清空。
+	// 凭据校验失败（Credential 注释中的长度校验）也写入本字段，格式为 "credential <id>: invalid length"，
+	// 多条以分号分隔，不含秘密值；某条凭据的错误只在该凭据被移除或被正确的值替换后才清空，
+	// 其他内核或入站操作的成功不清空凭据错误。
+	KernelError   string `protobuf:"bytes,11,opt,name=kernel_error,json=kernelError,proto3" json:"kernel_error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReportStatus) Reset() {
@@ -1301,7 +1349,7 @@ var File_node_v1_messages_proto protoreflect.FileDescriptor
 
 const file_node_v1_messages_proto_rawDesc = "" +
 	"\n" +
-	"\x16node/v1/messages.proto\x12\anode.v1\x1a\x14node/v1/common.proto\"\xc2\x01\n" +
+	"\x16node/v1/messages.proto\x12\anode.v1\x1a\x14node/v1/common.proto\"\x8a\x02\n" +
 	"\n" +
 	"Credential\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
@@ -1311,7 +1359,9 @@ const file_node_v1_messages_proto_rawDesc = "" +
 	"\x10speed_limit_mbps\x18\x04 \x01(\rR\x0espeedLimitMbps\x12\"\n" +
 	"\rexpires_at_ms\x18\x05 \x01(\x03R\vexpiresAtMs\x12\x1f\n" +
 	"\vmax_sources\x18\x06 \x01(\rR\n" +
-	"maxSources\"\xdc\x01\n" +
+	"maxSources\x12\"\n" +
+	"\rss2022_key_16\x18\a \x01(\fR\vss2022Key16\x12\"\n" +
+	"\rss2022_key_32\x18\b \x01(\fR\vss2022Key32\"\xdc\x01\n" +
 	"\aInbound\x12\x10\n" +
 	"\x03tag\x18\x01 \x01(\tR\x03tag\x12-\n" +
 	"\bprotocol\x18\x02 \x01(\x0e2\x11.node.v1.ProtocolR\bprotocol\x12\x1f\n" +

@@ -112,6 +112,7 @@ func Schema(c Combo) obj {
 	case "mkcp":
 		props["mkcp"] = ref("mkcp")
 		defs["mkcp"] = transportDef("mkcp")
+		required = append(required, "mkcp")
 	}
 
 	// 协议参数。
@@ -382,19 +383,60 @@ func transportDef(t string) obj {
 			"mode": obj{"enum": []any{"auto", "packet-up", "stream-up", "stream-one"}, "description": "XHTTP 模式，默认 auto。"},
 		}
 	case "mkcp":
+		d["required"] = []any{"finalmask"}
 		d["properties"] = obj{
 			"mtu":                    obj{"type": "integer", "minimum": 576, "maximum": 1460, "description": "默认 1350。"},
 			"tti_ms":                 obj{"type": "integer", "minimum": 10, "maximum": 100, "description": "传输时间间隔，默认 50。"},
 			"uplink_capacity_mbps":   obj{"type": "integer", "minimum": 0, "maximum": 10000, "description": "上行容量，默认 5。"},
 			"downlink_capacity_mbps": obj{"type": "integer", "minimum": 0, "maximum": 10000, "description": "下行容量，默认 20。"},
 			"is_congestion_enabled":  obj{"type": "boolean", "description": "启用拥塞控制，默认 false。"},
-			"read_buffer_mb":         obj{"type": "integer", "minimum": 1, "maximum": 64, "description": "单连接读缓冲，默认 2。"},
-			"write_buffer_mb":        obj{"type": "integer", "minimum": 1, "maximum": 64, "description": "单连接写缓冲，默认 2。"},
-			"header_type":            obj{"enum": []any{"none", "srtp", "utp", "wechat-video", "dtls", "wireguard"}, "description": "包头伪装，默认 none。"},
-			"seed":                   obj{"type": "string", "minLength": 1, "maxLength": 64, "description": "混淆种子，入站内全部连接共用，不是用户凭据。"},
+			"read_buffer_mb":         obj{"type": "integer", "minimum": 1, "maximum": 64, "description": "单连接读缓冲，单位 MiB，默认 2。"},
+			"write_buffer_mb":        obj{"type": "integer", "minimum": 1, "maximum": 64, "description": "单连接写缓冲，单位 MiB，默认 2。"},
+			"finalmask":              mkcpFinalmask(),
 		}
 	}
 	return d
+}
+
+// mkcpFinalmask 是 mKCP 的 UDP 包伪装与混淆。Xray-core 已删除 mKCP 的 header 与 seed，
+// 改由 streamSettings.finalmask.udp 表达（xray-core infra/conf/transport_internet.go 中的 udpmaskLoader）。
+func mkcpFinalmask() obj {
+	return obj{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []any{"obfs"},
+		"properties": obj{
+			"header": obj{
+				"enum": []any{"header-srtp", "header-utp", "header-wechat", "header-dtls", "header-wireguard"},
+				"description": "包头伪装，取值为 Xray-core finalmask 的 UDP 类型名。省略时不加包头。header-dns、header-custom、noise 等其他 finalmask 类型不支持。" +
+					"旧版 mKCP 的 header.type 对应关系：srtp、utp、wechat-video、dtls、wireguard 分别对应 header-srtp、header-utp、header-wechat、header-dtls、header-wireguard。",
+			},
+			"obfs": obj{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []any{"type"},
+				"properties": obj{
+					"type": obj{
+						"enum":        []any{"mkcp-original", "mkcp-aes128gcm"},
+						"description": "mkcp-original 为旧版 mKCP 未设 seed 时的校验与混淆；mkcp-aes128gcm 为旧版设置 seed 时的 AES-128-GCM 加密。",
+					},
+					"key": obj{
+						"type": "string", "minLength": 1, "maxLength": 64,
+						"description": "mkcp-aes128gcm 的密码（对应 finalmask 的 settings.password，即旧版 seed），入站内全部连接共用，不是用户凭据。",
+					},
+				},
+				"allOf": []any{obj{
+					"if":   obj{"properties": obj{"type": obj{"const": "mkcp-aes128gcm"}}},
+					"then": obj{"required": []any{"key"}},
+					"else": obj{"not": obj{"required": []any{"key"}}},
+				}},
+				"description": "mKCP 数据包的校验与混淆，必填，没有隐式默认值。与旧版 mKCP 未设 seed 的行为一致时填 {\"type\": \"mkcp-original\"}。",
+			},
+		},
+		"description": "必填。Agent 生成 Xray-core 配置时写入 streamSettings.finalmask.udp，顺序为 [header（若有）, obfs]，" +
+			"即包头在最外层；对照用例见 testdata/mkcp-finalmask.json。导出配置（spec/23）必须写出相同的 finalmask。" +
+			"finalmask 的其他 UDP 类型（header-custom、header-dns、noise、salamander、sudoku、xdns、xicmp）与 tcp、quicParams 不支持。",
+	}
 }
 
 // Readme 生成 schemas/inbound/README.md。

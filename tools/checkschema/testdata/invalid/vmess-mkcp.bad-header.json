@@ -2,6 +2,7 @@
   "transport": "mkcp",
   "mkcp": {
     "finalmask": {
+      "header": "wechat-video",
       "obfs": {
         "type": "mkcp-original"
       }

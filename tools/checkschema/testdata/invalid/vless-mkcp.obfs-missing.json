@@ -2,9 +2,7 @@
   "transport": "mkcp",
   "mkcp": {
     "finalmask": {
-      "obfs": {
-        "type": "mkcp-original"
-      }
+      "header": "header-srtp"
     }
   }
 }

@@ -8,7 +8,12 @@
     "is_congestion_enabled": false,
     "read_buffer_mb": 2,
     "write_buffer_mb": 2,
-    "header_type": "wechat-video",
-    "seed": "k7q2xm-seed"
+    "finalmask": {
+      "header": "header-wechat",
+      "obfs": {
+        "type": "mkcp-aes128gcm",
+        "key": "k7q2xm-seed"
+      }
+    }
   }
 }

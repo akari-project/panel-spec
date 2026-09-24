@@ -8,7 +8,8 @@
 - `openapi/console/v1.yaml`：管理接口（spec/31，M0-03 编写）。每个操作带 `x-permission`（spec/10 AUTH-17）。
 - `schemas/inbound/`：入站 `settings_json` 的 JSON Schema，按 `<protocol>-<transport>.schema.json` 命名（spec/21 AGT-13）；`examples/` 为每个 schema 的合法示例（手写，`<组合>.json` 或 `<组合>.<变体>.json`）。schema 与 `README.md` 由 `tools/schemagen` 生成，禁止手改。
 - `gen/`：生成代码，禁止手改。`gen/go/` 来自 proto，`gen/ts/client.d.ts`、`gen/ts/console.d.ts` 来自 OpenAPI。
-- `testdata/node-v1-vectors.json`：握手与会话加密测试向量，由 `tools/vectors` 生成。
+- `testdata/node-v1-vectors.json`：握手、会话加密与代理凭据各协议形式等测试向量，由 `tools/vectors` 生成。
+- `testdata/mkcp-finalmask.json`：mKCP `finalmask` 与 Xray-core `streamSettings.finalmask.udp` 的对照用例（手写，`tools/checkschema` 测试）。
 - `tools/schemagen`：入站 schema 的生成源。组合矩阵在 `matrix.go`（抄自 spec/21 21.2），字段在 `main.go`。
 - `tools/checkapi`：OpenAPI 检查：每个操作有响应示例、禁用词（spec/30 API-01）、管理接口 `x-permission`（目录硬编码，来源 spec/10 AUTH-17，规格变更时同步）。
 - `tools/checkschema`：校验 schema 合法、文件名与 proto 枚举一致、无禁用词与凭据字段、示例通过校验；`testdata/invalid/` 为必须被拒绝的实例。
