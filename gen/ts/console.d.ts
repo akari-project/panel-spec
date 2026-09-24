@@ -1612,7 +1612,7 @@ export interface paths {
         put?: never;
         /**
          * 上传附件
-         * @description 只允许 PNG、JPEG、WebP，按内容识别类型；单个不超过 5 MB，超限返回 413 `payload_too_large`（OPS-10）。
+         * @description 只允许 PNG、JPEG、WebP，按内容识别类型；单个不超过 5 MiB，超限返回 413 `payload_too_large`（OPS-10）。
          */
         post: operations["uploadSupportAttachment"];
         delete?: never;
@@ -6797,7 +6797,7 @@ export interface operations {
                      *           "affected_account_count": 312,
                      *           "processed_account_count": 312,
                      *           "actor_id": "01927c3e-8a41-7003-9d3e-5f6a7b8c0003",
-                     *           "reason": "标准版流量由 150 GB 提升到 200 GB，同步给现有用户",
+                     *           "reason": "标准版流量由 150 GiB 提升到 200 GiB，同步给现有用户",
                      *           "created_at": "2026-09-23T10:15:00+08:00",
                      *           "completed_at": "2026-09-23T10:16:02+08:00"
                      *         }
@@ -6837,7 +6837,7 @@ export interface operations {
                  *         "bytes_per_cycle"
                  *       ],
                  *       "expected_affected_account_count": 312,
-                 *       "reason": "标准版流量由 150 GB 提升到 200 GB，同步给现有用户"
+                 *       "reason": "标准版流量由 150 GiB 提升到 200 GiB，同步给现有用户"
                  *     }
                  */
                 "application/json": components["schemas"]["RolloutCreate"];
@@ -6861,7 +6861,7 @@ export interface operations {
                      *       "affected_account_count": 312,
                      *       "processed_account_count": 0,
                      *       "actor_id": "01927c3e-8a41-7003-9d3e-5f6a7b8c0003",
-                     *       "reason": "标准版流量由 150 GB 提升到 200 GB，同步给现有用户",
+                     *       "reason": "标准版流量由 150 GiB 提升到 200 GiB，同步给现有用户",
                      *       "created_at": "2026-09-23T10:15:00+08:00",
                      *       "completed_at": null
                      *     }
@@ -6903,7 +6903,7 @@ export interface operations {
                      *       "affected_account_count": 312,
                      *       "processed_account_count": 120,
                      *       "actor_id": "01927c3e-8a41-7003-9d3e-5f6a7b8c0003",
-                     *       "reason": "标准版流量由 150 GB 提升到 200 GB，同步给现有用户",
+                     *       "reason": "标准版流量由 150 GiB 提升到 200 GiB，同步给现有用户",
                      *       "created_at": "2026-09-23T10:15:00+08:00",
                      *       "completed_at": null
                      *     }
@@ -6940,7 +6940,7 @@ export interface operations {
                      *       "items": [
                      *         {
                      *           "id": "01927c3e-8a41-702f-9d3e-5f6a7b8c002f",
-                     *           "name": "50 GB 流量包",
+                     *           "name": "50 GiB 流量包",
                      *           "kind": "data",
                      *           "bytes_total": 53687091200,
                      *           "device_slots": 0,
@@ -6976,7 +6976,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "name": "50 GB 流量包",
+                 *       "name": "50 GiB 流量包",
                  *       "kind": "data",
                  *       "bytes_total": 53687091200,
                  *       "amount_minor": 1000,
@@ -6997,7 +6997,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "id": "01927c3e-8a41-702f-9d3e-5f6a7b8c002f",
-                     *       "name": "50 GB 流量包",
+                     *       "name": "50 GiB 流量包",
                      *       "kind": "data",
                      *       "bytes_total": 53687091200,
                      *       "device_slots": 0,
@@ -7038,7 +7038,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "id": "01927c3e-8a41-702f-9d3e-5f6a7b8c002f",
-                     *       "name": "50 GB 流量包",
+                     *       "name": "50 GiB 流量包",
                      *       "kind": "data",
                      *       "bytes_total": 53687091200,
                      *       "device_slots": 0,
@@ -7092,7 +7092,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "id": "01927c3e-8a41-702f-9d3e-5f6a7b8c002f",
-                     *       "name": "50 GB 流量包",
+                     *       "name": "50 GiB 流量包",
                      *       "kind": "data",
                      *       "bytes_total": 53687091200,
                      *       "device_slots": 0,
