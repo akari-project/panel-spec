@@ -2,7 +2,7 @@
 openapi: '3.1.0'
 info:
   title: 'Console API'
-  version: '0.4.0'
+  version: '0.5.0'
   description: |-
     管理后台（admin）使用的管理接口。规则见 spec/31，命名、分页、错误等通用约定见 spec/02 与 spec/30 API-01。
 
@@ -13127,14 +13127,14 @@ components:
         min_version:
           type: object
           description: |
-            客户端最低版本（spec/30 API-03、API-10），键为平台，值为 `x.y.z`；没有列出的平台不限制。
-            不应高于该平台已发布的版本。平台或版本格式错误返回 `invalid_format`（`errors[].field` 如 `min_version.ios`）。
-            修改后 `/v1/config` 重新签名。
+            客户端最低版本（spec/30 API-03、API-11），键为平台，值为 `x.y.z`；没有列出的平台不限制。
+            不应高于该平台已发布的版本（M1 只在界面提示，不校验）。平台或版本格式错误返回 `invalid_format`
+            （`errors[].field` 如 `min_version.ios`）。更新时整体替换，提交 `{}` 解除全部限制。修改后 `/v1/config` 重新签名。
           propertyNames:
             $ref: '#/components/schemas/ClientPlatform'
           additionalProperties:
             type: string
-            pattern: '^\d+\.\d+\.\d+$'
+            pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           example:
             ios: 1.2.0
             android: 1.2.0
@@ -13261,14 +13261,14 @@ components:
         min_version:
           type: object
           description: |
-            客户端最低版本（spec/30 API-03、API-10），键为平台，值为 `x.y.z`；没有列出的平台不限制。
-            不应高于该平台已发布的版本。平台或版本格式错误返回 `invalid_format`（`errors[].field` 如 `min_version.ios`）。
-            修改后 `/v1/config` 重新签名。
+            客户端最低版本（spec/30 API-03、API-11），键为平台，值为 `x.y.z`；没有列出的平台不限制。
+            不应高于该平台已发布的版本（M1 只在界面提示，不校验）。平台或版本格式错误返回 `invalid_format`
+            （`errors[].field` 如 `min_version.ios`）。更新时整体替换，提交 `{}` 解除全部限制。修改后 `/v1/config` 重新签名。
           propertyNames:
             $ref: '#/components/schemas/ClientPlatform'
           additionalProperties:
             type: string
-            pattern: '^\d+\.\d+\.\d+$'
+            pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           example:
             ios: 1.2.0
             android: 1.2.0

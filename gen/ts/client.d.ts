@@ -17,7 +17,7 @@ export interface paths {
          *     RFC 8785（JCS）规范化后的 UTF-8 字节；`key_id` 标识签名密钥（十进制字符串），客户端内置当前与下一把公钥（CONV-30）。
          *
          *     签名是确定性的：相同 payload 在各副本得到相同的文档与 ETag。客户端只接受 `issued_at` 不早于上次已接受值的文档（防回滚），
-         *     否则继续使用旧文档。本接口永不返回 426，旧客户端仍能取得最低版本（API-03、API-10）。
+         *     否则继续使用旧文档。本接口永不返回 426，旧客户端仍能取得最低版本（API-03、API-11）。
          */
         get: operations["getConfig"];
         put?: never;
@@ -512,7 +512,7 @@ export interface paths {
         /**
          * 开始绑定 TOTP
          * @description 需要重新验证（AUTH-23）。返回待确认的密钥；调用 `POST /v1/me/mfa/totp/activation` 提交一次验证码后才生效。
-         *     待确认的密钥绑定发起本请求的会话，确认必须来自同一会话；再次调用时旧的待确认密钥作废（AUTH-11）。
+         *     待确认的密钥绑定发起本请求的会话链（同一次登录经刷新轮换产生的会话），确认必须来自同一会话链；再次调用时旧的待确认密钥作废（AUTH-11）。
          *     已启用时返回 409 `invalid_state`。
          */
         post: operations["startTotpEnrollment"];
@@ -537,7 +537,8 @@ export interface paths {
         put?: never;
         /**
          * 确认绑定 TOTP 并取得恢复码
-         * @description AUTH-11：生效时生成 10 个一次性恢复码，明文只在此响应中出现一次。
+         * @description AUTH-11：生效时生成 10 个一次性恢复码，明文只在此响应中出现一次。没有待确认的密钥、密钥已过期或已作废、
+         *     或请求不是来自发起绑定的会话链时，返回 409 `invalid_state`。
          */
         post: operations["activateTotp"];
         delete?: never;
@@ -1454,12 +1455,13 @@ export interface components {
                 };
                 /**
                  * @description 接口根地址（不含 `/v1` 与末尾的 `/`，可以带路径前缀，与 DEP-04 的 `api_base_url` 相同）。
-                 *     第一项为主地址，其后为部署者配置的备用地址（API-10）。
+                 *     第一项为主地址，其后为部署者配置的备用地址（API-11）。
                  */
                 api_endpoints: string[];
                 /**
                  * Format: date-time
-                 * @description 相关设置最后一次修改的时刻；客户端只接受不早于上次已接受值的文档（防回滚，API-10）
+                 * @description 签发时刻：取 `features`、`registration_policy`、`min_version` 最后一次修改的时刻（站点初始化时写入），公告模块实现后
+                 *     取它与公告版本对应时刻中的较大值。客户端只接受不早于上次已接受值的文档（防回滚，API-11）。
                  */
                 issued_at: string;
             };
@@ -1468,6 +1470,7 @@ export interface components {
              *     不得先丢弃未知字段，否则新增可选字段（CONV-14）会使旧客户端验签失败。
              */
             signature: string;
+            /** @description 签名密钥的 key id，1–255 的十进制字符串（CONV-30 `PANEL_CONFIG_KEY`） */
             key_id: string;
         };
         Release: {
@@ -2423,7 +2426,7 @@ export interface operations {
             200: {
                 headers: {
                     /**
-                     * @description `no-cache`：可以缓存，但每次使用前须以 ETag 重新验证（API-10）
+                     * @description `no-cache`：可以缓存，但每次使用前须以 ETag 重新验证（API-11）
                      * @example no-cache
                      */
                     "Cache-Control"?: string;

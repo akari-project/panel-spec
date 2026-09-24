@@ -3715,9 +3715,9 @@ export interface components {
              */
             proration_mode: "value" | "time_only";
             /**
-             * @description 客户端最低版本（spec/30 API-03、API-10），键为平台，值为 `x.y.z`；没有列出的平台不限制。
-             *     不应高于该平台已发布的版本。平台或版本格式错误返回 `invalid_format`（`errors[].field` 如 `min_version.ios`）。
-             *     修改后 `/v1/config` 重新签名。
+             * @description 客户端最低版本（spec/30 API-03、API-11），键为平台，值为 `x.y.z`；没有列出的平台不限制。
+             *     不应高于该平台已发布的版本（M1 只在界面提示，不校验）。平台或版本格式错误返回 `invalid_format`
+             *     （`errors[].field` 如 `min_version.ios`）。更新时整体替换，提交 `{}` 解除全部限制。修改后 `/v1/config` 重新签名。
              * @example {
              *       "ios": "1.2.0",
              *       "android": "1.2.0"
@@ -3791,9 +3791,9 @@ export interface components {
              */
             proration_mode?: "value" | "time_only";
             /**
-             * @description 客户端最低版本（spec/30 API-03、API-10），键为平台，值为 `x.y.z`；没有列出的平台不限制。
-             *     不应高于该平台已发布的版本。平台或版本格式错误返回 `invalid_format`（`errors[].field` 如 `min_version.ios`）。
-             *     修改后 `/v1/config` 重新签名。
+             * @description 客户端最低版本（spec/30 API-03、API-11），键为平台，值为 `x.y.z`；没有列出的平台不限制。
+             *     不应高于该平台已发布的版本（M1 只在界面提示，不校验）。平台或版本格式错误返回 `invalid_format`
+             *     （`errors[].field` 如 `min_version.ios`）。更新时整体替换，提交 `{}` 解除全部限制。修改后 `/v1/config` 重新签名。
              * @example {
              *       "ios": "1.2.0",
              *       "android": "1.2.0"

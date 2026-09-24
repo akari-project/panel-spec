@@ -5,18 +5,20 @@
 
 ## v0.5.0（M1-01 后续：重新验证范围与 /v1/config 的生成规则）
 
-相对 v0.4.0。依据 workspace spec/10 AUTH-11、AUTH-23，spec/30 API-03、API-10，spec/02 CONV-30，spec/03 3.6，以及评审记录 `review/m1-01-followups-debate-2026-09-24.md`。含语义变更（开始绑定 TOTP 需要重新验证），按 ENG-04 升小版本。最低契约版本为 v0.5.0。
+相对 v0.4.0。依据 workspace spec/10 AUTH-11、AUTH-23，spec/30 API-03、API-11，spec/02 CONV-30，spec/03 3.6，以及评审记录 `review/m1-01-followups-debate-2026-09-24.md`。含语义变更（开始绑定 TOTP 需要重新验证），按 ENG-04 升小版本。最低契约版本为 v0.5.0。
 
 ### 新增
 - 管理接口 `Settings.min_version`（响应必有，默认 `{}`）与 `SettingsUpdate.min_version`（可选）：按平台的客户端最低版本，值为 `x.y.z`；新增 `ClientPlatform` 定义，与客户端接口相同。
 - 客户端接口 `GET /v1/config` 的 200 响应列出 `Cache-Control: no-cache`。
 
 ### 变更（破坏性）
-- `POST /v1/me/mfa/totp`（`startTotpEnrollment`）需要重新验证（AUTH-23），401 改为引用 `MfaRequired`；待确认的密钥绑定发起会话，确认必须来自同一会话（AUTH-11）。迁移：客户端收到 401 `mfa_required` 时调用 `POST /v1/me/reauthentications` 后重试，与停用 TOTP 相同；以密码登录后 5 分钟内视为已重新验证，新用户登录后立即绑定不受影响。
+- `POST /v1/me/mfa/totp`（`startTotpEnrollment`）需要重新验证（AUTH-23），401 改为引用 `MfaRequired`；待确认的密钥绑定发起会话，确认必须来自同一会话链（AUTH-11）；`activateTotp` 写明没有待确认密钥、已作废或会话链不符时返回 409 `invalid_state`。迁移：客户端收到 401 `mfa_required` 时调用 `POST /v1/me/reauthentications` 后重试，与停用 TOTP 相同；以密码登录后 5 分钟内视为已重新验证，新用户登录后立即绑定不受影响。
 
 ### 修复
 - `getConfig` 的描述写明：`key_id` 为十进制字符串（示例由 `cfg-2026-01` 改为 `1`，与 CONV-30 的 `PANEL_CONFIG_KEY` 一致）；签名确定、各副本 ETag 一致；客户端按 `issued_at` 防回滚；本接口永不返回 426。
 - `payload.api_endpoints` 写明为接口根地址（与 DEP-04 的 `api_base_url` 相同，可以带路径前缀），第一项为主地址；`announcement_version` 写明语义；`min_version` 写明未列出的平台不限制。
+- 文档总述改为只有 `createSession`、`createSessionNonce`、`createDeviceLink`、`getMyConfiguration` 返回 426，与 API-03 及这四个操作的响应一致；此前写“任何接口都可能返回 426”。
+- `SignedConfig.key_id` 加约束（1–255 的十进制字符串）；`issued_at` 的描述补全；管理接口 `min_version` 的版本号不允许前导零，更新时整体替换。
 - 两份 OpenAPI 的 `info.version` 改为 0.5.0。
 
 ### 安全
