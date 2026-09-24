@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // 节点协议的业务消息。语义见 spec/20、spec/21、spec/22。
 //
-// 带 config_version 的指令按 spec/20 NODE-23 应用：
+// 带版本号的指令按 spec/20 NODE-23 应用：
 //   - SyncFull：版本高于本地才应用；
-//   - 其他指令：等于本地 + 1 才应用；不大于本地只确认；跳号则请求全量同步。
+//   - SyncDelta：to_version 不大于本地只确认；from_version 等于本地才应用，本地前进到 to_version；
+//     其余情况（含本地落在 from_version 与 to_version 之间）不做部分应用，请求全量同步；
+//   - 其他指令（CredUpsert、CredRemove、InboundApply、RoutesApply）：等于本地 + 1 才应用；
+//     不大于本地只确认；跳号则请求全量同步。
 syntax = "proto3";
 
 package node.v1;
@@ -88,6 +91,7 @@ message SyncFull {
 }
 
 // 只能表达凭据变化；中间变更含非凭据变化时必须发 SyncFull（spec/20 NODE-15）。
+// 应用条件见文件头（spec/20 NODE-23）：from_version 等于本地才应用。
 message SyncDelta {
   uint64 from_version = 1;
   uint64 to_version = 2;
