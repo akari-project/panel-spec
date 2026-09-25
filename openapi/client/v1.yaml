@@ -32,7 +32,8 @@ info:
     ## 幂等（CONV-12）
     产生副作用的 `POST` 接受 `Idempotency-Key`（UUID）。作用域：已认证请求为“账号 + 键”，未认证请求为“路由 + 键”；
     记录保存 24 小时。同键同体返回相同结果；同键不同体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回
-    409 `conflict` 并带 `Retry-After`；5xx 不缓存。响应中含令牌、密钥、恢复码或导入链接的接口
+    409 `conflict` 并带 `Retry-After`。5xx、401、429 不缓存，可用同一键重试：例如收到 401 `mfa_required` 并完成重新验证
+    （AUTH-23）后，或按 `Retry-After` 等待后，用原键重试原请求。响应中含令牌、密钥、恢复码或导入链接的接口
     （`POST /v1/sessions`、`/v1/oauth/*`、`POST /v1/device-links`、`POST /v1/me/reauthentications`、
     TOTP 与恢复码、导入链接重置）不接受该请求头，避免在幂等记录中保存秘密。
 

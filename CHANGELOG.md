@@ -5,7 +5,7 @@
 
 ## v0.6.0（M1-01 后续：运营模块开关 features 的语义、批准新设备需要重新验证）
 
-相对 v0.5.0。依据 workspace spec/03 3.6、spec/13 OPS-08、spec/30 API-11、spec/10 AUTH-23、AUTH-24，以及评审记录 `review/features-spec-debate-2026-09-25.md`（含“C2 定案”）。含语义变更（`features` 返回有效值、更新按键合并并拒绝开启未实现的模块；批准设备授权与扫码登录需要重新验证），按 ENG-04 升小版本。最低契约版本为 v0.6.0。
+相对 v0.5.0。依据 workspace spec/03 3.6、spec/13 OPS-08、spec/30 API-11、spec/10 AUTH-23、AUTH-24、spec/02 CONV-12，以及评审记录 `review/features-spec-debate-2026-09-25.md`（含“C2 定案”）。含语义变更（`features` 返回有效值、更新按键合并并拒绝开启未实现的模块；批准设备授权与扫码登录需要重新验证），按 ENG-04 升小版本。最低契约版本为 v0.6.0。
 
 ### 新增
 - 管理接口 `Settings.features`（响应）列出 `required`：五个模块键必有，与客户端接口 `SignedConfig.features` 一致。
@@ -14,6 +14,7 @@
 - 管理接口 `Settings.features` 与客户端接口 `SignedConfig.features` 返回有效值：存储为 `true` 且本版本控制面已实现该模块才为 `true`，缺省全部为 `false`（OPS-08）。存储中残留的 `true` 保留，升级到实现该模块的版本后恢复生效。
 - `SettingsUpdate.features` 按键合并，只修改提交的模块（与 `min_version` 的整体替换不同）；`null`、非布尔值、未知模块名返回 400 `invalid_request`（`invalid_format`，`field` 如 `features.support`）；开启未实现的模块返回 400 `invalid_request`（`not_allowed`），提交 `false` 始终允许（CONV-16）。迁移：设置管理接口尚未实现（M1-09），无已有调用方；后台只提交要修改的模块，并按构建时的模块清单置灰未实现的模块。
 - `POST /v1/me/device-authorizations`（`approveDeviceAuthorization`）与 `POST /v1/device-links/{id}/approve`（`approveDeviceLink`）需要重新验证（AUTH-23、AUTH-24），401 改为引用 `MfaRequired`，与 `disableTotp`、`startTotpEnrollment` 一致。迁移：两个接口尚未实现，无兼容影响；实现后客户端收到 401 `mfa_required` 时调用 `POST /v1/me/reauthentications` 后重试。
+- 幂等（CONV-12）：401 与 429 同 5xx 一样不缓存，删除记录，允许用同一键重试（client 文档总述）。此前规定缓存全部 4xx，处理器返回的 401 `mfa_required` 会被缓存，重新验证后用原键重试会一直得到 401。迁移：现有控制面实现在处理器返回 401 或 429 时仍会缓存，panel 跟进后修复；客户端无需修改，按 UI-09 用原键重试即可。
 - `SignedConfig.payload.issued_at`：只有 `features`、`registration_policy`、`min_version` 的有效值实际变化时更新，严格递增（`max(当前时刻, 上一次的值 + 1 秒)`，秒精度，API-11）；客户端仍按“不早于”防回滚，同一文档重复获取必须接受。
 
 ### 修复
