@@ -1445,7 +1445,10 @@ export interface components {
                  * @enum {string}
                  */
                 registration_policy?: "open" | "invite_only" | "closed";
-                /** @description 运营模块开关（OPS-08）。键名由 spec/13 OPS-08 规定，是 CONV-10 布尔字段须以 `is_`/`has_` 开头的例外。 */
+                /**
+                 * @description 运营模块开关（OPS-08）。键名由 spec/13 OPS-08 规定，是 CONV-10 布尔字段须以 `is_`/`has_` 开头的例外。
+                 *     值为有效值：运营者已开启且本版本控制面已实现该模块才为 `true`，缺省全部为 `false`；为 `false` 的模块，其客户端接口返回 404 `not_found`，前端隐藏入口。
+                 */
                 features: {
                     announcements: boolean;
                     articles: boolean;
@@ -1460,8 +1463,9 @@ export interface components {
                 api_endpoints: string[];
                 /**
                  * Format: date-time
-                 * @description 签发时刻：取 `features`、`registration_policy`、`min_version` 最后一次修改的时刻（站点初始化时写入），公告模块实现后
-                 *     取它与公告版本对应时刻中的较大值。客户端只接受不早于上次已接受值的文档（防回滚，API-11）。
+                 * @description 签发时刻（秒精度）：站点初始化时写入；`features`、`registration_policy`、`min_version` 的有效值实际变化时更新，
+                 *     严格递增（取 `max(当前时刻, 上一次的值 + 1 秒)`，API-11）。公告模块实现后取它与公告版本对应时刻中的较大值。
+                 *     客户端只接受不早于上次已接受值的文档（防回滚）；同一文档重复获取时 `issued_at` 相等，必须接受。
                  */
                 issued_at: string;
             };

@@ -3,6 +3,28 @@
 
 格式遵循 spec/42 42.5：每个版本分为新增、变更、修复、安全四部分。1.0 之前的小版本允许破坏性变更，但必须在此说明迁移方法（ENG-04）。
 
+## v0.6.0（M1-01 后续：运营模块开关 features 的语义）
+
+相对 v0.5.0。依据 workspace spec/03 3.6、spec/13 OPS-08、spec/30 API-11，以及评审记录 `review/features-spec-debate-2026-09-25.md`。含语义变更（`features` 返回有效值、更新按键合并并拒绝开启未实现的模块），按 ENG-04 升小版本。最低契约版本为 v0.6.0。
+
+### 新增
+- 管理接口 `Settings.features`（响应）列出 `required`：五个模块键必有，与客户端接口 `SignedConfig.features` 一致。
+
+### 变更
+- 管理接口 `Settings.features` 与客户端接口 `SignedConfig.features` 返回有效值：存储为 `true` 且本版本控制面已实现该模块才为 `true`，缺省全部为 `false`（OPS-08）。存储中残留的 `true` 保留，升级到实现该模块的版本后恢复生效。
+- `SettingsUpdate.features` 按键合并，只修改提交的模块（与 `min_version` 的整体替换不同）；`null`、非布尔值、未知模块名返回 400 `invalid_request`（`invalid_format`，`field` 如 `features.support`）；开启未实现的模块返回 400 `invalid_request`（`not_allowed`），提交 `false` 始终允许（CONV-16）。迁移：设置管理接口尚未实现（M1-09），无已有调用方；后台只提交要修改的模块，并按构建时的模块清单置灰未实现的模块。
+- `SignedConfig.payload.issued_at`：只有 `features`、`registration_policy`、`min_version` 的有效值实际变化时更新，严格递增（`max(当前时刻, 上一次的值 + 1 秒)`，秒精度，API-11）；客户端仍按“不早于”防回滚，同一文档重复获取必须接受。
+
+### 修复
+- 管理接口 `getSettings`、`updateSettings` 的示例中 `features` 改为全部 `false`，与缺省值及 M1 的行为一致（此前示例开启了尚未实现的模块）。
+- `features` 的描述写明是 CONV-10 布尔前缀的例外（管理接口此前只在客户端接口中说明）。
+- 两份 OpenAPI 的 `info.version` 改为 0.6.0。
+
+### 安全
+- `issued_at` 严格递增：此前同一秒内的两次修改会得到相同的 `issued_at`，按“不早于”规则客户端会接受被替换的旧签名文档；副本时钟偏差也可能写入更早的值，使客户端长期拒绝新文档。
+
+能否在线执行：可以，不涉及 proto 与数据库。控制面与管理后台、用户中心嵌入同一二进制，同时升级；回滚到旧二进制时，新版本开启的模块若旧版本未实现，按有效值规则下发 `false`。
+
 ## v0.5.0（M1-01 后续：重新验证范围与 /v1/config 的生成规则）
 
 相对 v0.4.0。依据 workspace spec/10 AUTH-11、AUTH-23，spec/30 API-03、API-11，spec/02 CONV-30，spec/03 3.6，以及评审记录 `review/m1-01-followups-debate-2026-09-24.md`。含语义变更（开始绑定 TOTP 需要重新验证），按 ENG-04 升小版本。最低契约版本为 v0.5.0。
