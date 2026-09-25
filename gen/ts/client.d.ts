@@ -1485,7 +1485,7 @@ export interface components {
             sha256: string;
             /**
              * @description 安装包的 Ed25519 签名（64 字节，标准 base64 编码的字符串）。密钥由发布流程离线保管，不在控制面中（CONV-30）；
-             *     签名输入尚未定义，在自研客户端立项时比照 spec/40 DEP-09 定义。
+             *     签名输入尚未定义，在自研客户端立项时比照 spec/40 DEP-09 定义（workspace `backlog/M5.md`）。
              */
             signature: string;
             /** @description 发布签名密钥的 key id，1–255 的十进制字符串（CONV-30）；客户端内置当前与下一把公钥，按它选择 */
