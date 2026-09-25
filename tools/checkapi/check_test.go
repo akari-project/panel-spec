@@ -41,6 +41,31 @@ const okOp = `/v1/me:
             example: {id: a}
 `
 
+// sensitiveComponents 是敏感操作引用的组件。
+const sensitiveComponents = `responses:
+  MfaRequired:
+    description: x
+parameters:
+  MfaAssertion: {name: Mfa-Assertion, in: header, schema: {type: string}}
+  AuditReason: {name: Audit-Reason, in: header, schema: {type: string}}
+`
+
+// sensitiveOp 构造一个 x-sensitive 操作；三个开关分别控制 401 MfaRequired、Mfa-Assertion 与 Audit-Reason 参数。
+func sensitiveOp(method string, with401, withAssertion, withReason bool) string {
+	s := "/v1/me:\n  " + method + ":\n    x-permission: accounts.read\n    x-sensitive: true\n    parameters:\n"
+	if withAssertion {
+		s += "    - $ref: '#/components/parameters/MfaAssertion'\n"
+	}
+	if withReason {
+		s += "    - $ref: '#/components/parameters/AuditReason'\n"
+	}
+	s += "    - {name: q, in: query, schema: {type: string}}\n    responses:\n"
+	if with401 {
+		s += "      '401':\n        $ref: '#/components/responses/MfaRequired'\n"
+	}
+	return s + "      '204':\n        description: OK\n"
+}
+
 func TestCheck(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -314,27 +339,65 @@ schemas:
 			console: true,
 		},
 		{
-			name: "sensitive op with MfaRequired 401",
-			doc: doc(strings.Replace(okOp, "    responses:\n", "    x-sensitive: true\n    responses:\n      '401':\n        $ref: '#/components/responses/MfaRequired'\n", 1),
-				"responses:\n  MfaRequired:\n    description: x\n"),
+			name:    "sensitive op complete",
+			doc:     doc(sensitiveOp("get", true, true, false), sensitiveComponents),
+			console: true,
+		},
+		{
+			name:    "sensitive delete complete",
+			doc:     doc(sensitiveOp("delete", true, true, true), sensitiveComponents),
+			console: true,
+		},
+		{
+			name:    "sensitive op with inline Mfa-Assertion header",
+			doc:     doc(strings.Replace(sensitiveOp("get", true, false, false), "    parameters:\n", "    parameters:\n    - {name: Mfa-Assertion, in: header, schema: {type: string}}\n", 1), sensitiveComponents),
 			console: true,
 		},
 		{
 			name:    "sensitive op without 401",
-			doc:     doc(strings.Replace(okOp, "    responses:\n", "    x-sensitive: true\n    responses:\n", 1), ""),
+			doc:     doc(sensitiveOp("get", false, true, false), sensitiveComponents),
 			console: true,
 			want:    []string{"GET /v1/me 是敏感操作，401 必须引用 #/components/responses/MfaRequired"},
 		},
 		{
-			name: "sensitive op with other 401",
-			doc: doc(strings.Replace(okOp, "    responses:\n", "    x-sensitive: true\n    responses:\n      '401':\n        $ref: '#/components/responses/Problem'\n", 1),
-				"responses:\n  Problem:\n    description: x\n"),
+			name:    "sensitive op with other 401",
+			doc:     doc(strings.Replace(sensitiveOp("get", true, true, false), "MfaRequired'", "Problem'", 1), sensitiveComponents+"  Problem:\n    description: x\n"),
 			console: true,
 			want:    []string{"401 必须引用"},
 		},
 		{
+			name:    "sensitive op without Mfa-Assertion",
+			doc:     doc(sensitiveOp("get", true, false, false), sensitiveComponents),
+			console: true,
+			want:    []string{"必须声明请求头 Mfa-Assertion"},
+		},
+		{
+			name:    "sensitive delete without Audit-Reason",
+			doc:     doc(sensitiveOp("delete", true, true, false), sensitiveComponents),
+			console: true,
+			want:    []string{"DELETE /v1/me 是敏感的 DELETE，必须声明请求头 Audit-Reason"},
+		},
+		{
+			name:    "non-sensitive op must not use MfaRequired",
+			doc:     doc(strings.Replace(sensitiveOp("get", true, true, false), "    x-sensitive: true\n", "", 1), sensitiveComponents),
+			console: true,
+			want:    []string{"GET /v1/me 不是敏感操作，401 不得引用"},
+		},
+		{
+			name:    "x-sensitive false with MfaRequired",
+			doc:     doc(strings.Replace(sensitiveOp("get", true, true, false), "x-sensitive: true", "x-sensitive: false", 1), sensitiveComponents),
+			console: true,
+			want:    []string{"不是敏感操作"},
+		},
+		{
+			name:    "x-sensitive not boolean",
+			doc:     doc(strings.Replace(sensitiveOp("get", true, true, false), "x-sensitive: true", "x-sensitive: 'true'", 1), sensitiveComponents),
+			console: true,
+			want:    []string{"x-sensitive 必须是布尔值"},
+		},
+		{
 			name: "x-sensitive ignored outside console",
-			doc:  doc(strings.Replace(okOp, "    responses:\n", "    x-sensitive: true\n    responses:\n", 1), ""),
+			doc:  doc(sensitiveOp("get", false, false, false), ""),
 		},
 		{
 			name:    "x-permission not scalar",

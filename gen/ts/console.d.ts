@@ -122,12 +122,12 @@ export interface paths {
          * 接受管理员邀请
          * @description 被邀请人打开邀请链接（`accept-invitation#token=<令牌>`）后调用，令牌只能使用一次（AUTH-22）。按被邀请邮箱的账号状态处理：
          *
-         *     1. 没有账号：`password` 必填（缺少返回 400，`errors[]` 为 `{field: password, code: required}`），创建账号，邮箱视为已验证。
+         *     1. 没有账号：`password` 必填（缺少返回 400，`errors[]` 为 `{field: password, code: required}`），创建账号，邮箱视为已验证；注册策略与邮箱域名名单（AUTH-02）不适用。
          *     2. 账号存在且邮箱已验证：忽略 `password`，沿用原密码。
-         *     3. 账号存在但邮箱未验证：`password` 必填；替换密码，删除该账号的二次验证，吊销其全部会话，邮箱标记为已验证。
+         *     3. 账号存在但邮箱未验证：`password` 必填；在同一事务中重置该账号的全部凭据：替换密码，删除二次验证，吊销全部会话、设备与代理凭据，轮换共用凭据（`credential.changed`），吊销导出令牌，作废尚未使用的验证码与找回密码令牌；邮箱标记为已验证。
          *     4. 账号已暂停、正在注销，或已经是管理员：返回 409 `invalid_state`。
          *
-         *     令牌不存在、已被接受或已撤销返回 400，`errors[]` 为 `{field: token, code: invalid_code}`；已过期为 `{field: token, code: expired}`。成功后通过 `POST /v1/sessions` 登录，首次登录时强制绑定 TOTP（AUTH-21）。写审计 `staff.create`（CON-09）。
+         *     令牌不存在、已被接受或已撤销返回 400，`errors[]` 为 `{field: token, code: invalid_code}`；已过期为 `{field: token, code: expired}`。成功后向该账号发送安全通知 `staff_roles_changed`（OPS-04），之后通过 `POST /v1/sessions` 登录，首次登录时强制绑定 TOTP（AUTH-21）。写审计 `staff.create`（CON-09）：`actor_id` 为接受邀请的账号，`diff` 含 `inviter_id`，第 3 项另含 `has_credentials_reset: true`。
          */
         post: operations["acceptStaffInvitation"];
         delete?: never;
@@ -192,7 +192,7 @@ export interface paths {
         get: operations["getAccountSuspension"];
         /**
          * 暂停账号
-         * @description 吊销全部会话与代理凭据，登录返回 403 `account_suspended`，写入 `account.status_changed` 事件；权益照常计时（AUTH-25）。已暂停时重复调用返回当前状态。
+         * @description 吊销全部会话与代理凭据，登录返回 403 `account_suspended`，写入 `account.status_changed` 事件；权益照常计时（AUTH-25）。已暂停时重复调用返回当前状态。目标账号持有任何管理员角色时只允许 superadmin，否则返回 403 `forbidden`（AUTH-22）。暂停最后一个 superadmin 返回 409 `invalid_state`。
          */
         put: operations["suspendAccount"];
         post?: never;
@@ -221,7 +221,7 @@ export interface paths {
         post?: never;
         /**
          * 强制下线（吊销全部会话）
-         * @description 吊销该账号的全部会话，1 秒内生效（AUTH-06）；设备与代理凭据保留。
+         * @description 吊销该账号的全部会话，1 秒内生效（AUTH-06）；设备与代理凭据保留。目标账号持有任何管理员角色时只允许 superadmin，否则返回 403 `forbidden`（AUTH-22）。
          */
         delete: operations["revokeAccountSessions"];
         options?: never;
@@ -239,7 +239,10 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** 吊销单个会话 */
+        /**
+         * 吊销单个会话
+         * @description 目标账号持有任何管理员角色时只允许 superadmin，否则返回 403 `forbidden`（AUTH-22）。
+         */
         delete: operations["revokeAccountSession"];
         options?: never;
         head?: never;
@@ -297,7 +300,7 @@ export interface paths {
         put?: never;
         /**
          * 重置用户密码
-         * @description 向用户邮箱发送一次性重置链接（30 分钟有效，AUTH-04），并立即吊销该账号的全部会话。管理员看不到链接与新密码。
+         * @description 向用户邮箱发送一次性重置链接（30 分钟有效，AUTH-04），并立即吊销该账号的全部会话。管理员看不到链接与新密码。目标账号持有任何管理员角色时只允许 superadmin，否则返回 403 `forbidden`（AUTH-22）。
          *
          *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
@@ -2085,12 +2088,12 @@ export interface components {
             errors?: components["schemas"]["FieldError"][];
             /**
              * Format: uuid
-             * @description `mfa_required` 时附带：二次验证挑战 ID（5 分钟有效，AUTH-20）
+             * @description 只在登录流程（`POST /v1/sessions` 第一步）的 `mfa_required` 中附带：二次验证挑战 ID（5 分钟有效，AUTH-20）；敏感操作的 `mfa_required`（AUTH-19）不附带
              */
             challenge_id?: string;
-            /** @description `mfa_required` 时附带：可用的二次验证方式 */
+            /** @description `mfa_required` 时附带：可用的二次验证方式。登录流程（AUTH-20）可含 `recovery_code`；敏感操作（AUTH-19）只列出 step-up 可用的方式，不含 `recovery_code` */
             methods?: ("totp" | "passkey" | "recovery_code")[];
-            /** @description 管理员尚未绑定 TOTP 时附带：本次登录需先完成绑定（AUTH-21、AUTH-22） */
+            /** @description 管理员尚未绑定 TOTP 时附带：本次登录需先完成绑定（AUTH-21） */
             totp_enrollment?: components["schemas"]["TotpEnrollment"];
             /** @description `kernel_protocol_unsupported` 时附带：与目标内核不兼容的入站 */
             incompatible_inbounds?: components["schemas"]["IncompatibleInbound"][];
