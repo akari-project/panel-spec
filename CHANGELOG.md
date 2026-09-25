@@ -3,6 +3,40 @@
 
 格式遵循 spec/42 42.5：每个版本分为新增、变更、修复、安全四部分。1.0 之前的小版本允许破坏性变更，但必须在此说明迁移方法（ENG-04）。
 
+## v0.7.0（M1-02 前置：管理员与角色只允许超级管理员、Mfa-Assertion、接受邀请的规则）
+
+相对 v0.6.1。依据 workspace spec/10 AUTH-17、AUTH-18、AUTH-19、AUTH-22，spec/31 CON-09，以及评审记录 `review/m1-02-spec-gaps-2026-09-25.md`。oasdiff 无错误与警告，只报告新增非成功响应的 info；但权限与接受邀请的规则是语义变更，按 ENG-04 升小版本。最低契约版本为 v0.7.0。
+
+### 新增
+- 管理接口 `components/responses/MfaRequired`：敏感操作缺少有效 `Mfa-Assertion` 时的 401 `mfa_required`（`methods` 只列出 step-up 可用的方式，不附 `challenge_id`），另含 `unauthenticated` 示例。19 个 `x-sensitive: true` 操作都声明 401 并引用它。
+- checkapi：管理接口中 `x-sensitive` 必须是布尔值；敏感操作必须声明 401 并引用 `#/components/responses/MfaRequired`，并声明 `Mfa-Assertion` 请求头，敏感的 DELETE 还必须声明 `Audit-Reason`；非敏感操作不得以 `MfaRequired` 作为 401（AUTH-19、CON-03）。
+- `acceptStaffInvitation` 声明 400（`invalid_code`、`expired`、`password` 的 `required` 三个示例）、409 `invalid_state` 与 429。
+- `createStaffInvitation` 声明 400（`email` 的 `taken` 示例）。
+
+### 变更（破坏性）
+- 管理员、邀请、角色的 13 个操作（`/v1/staff`、`/v1/staff/{id}`、`/v1/staff-invitations`、`/v1/staff-invitations/{id}`、`/v1/roles`、`/v1/roles/{id}`，包括只读操作）的 `x-permission` 由 `staff.*` 改为 `superadmin`（AUTH-22）。`staff.*` 保留在 `Permission` 枚举中，但与 `*` 一样不可授予自定义角色：`createRole`、`updateRole` 提交时返回 400 `invalid_request`（`not_allowed`）。迁移：接口尚未实现（M1-02），无兼容影响；管理后台按 `is_superadmin` 显示管理员与角色菜单。
+- `acceptStaffInvitation` 按被邀请邮箱的账号状态处理：没有账号时 `password` 必填；邮箱已验证的已有账号忽略 `password`；邮箱未验证的已有账号 `password` 必填，并在同一事务中重置全部凭据（替换密码、删除二次验证，吊销全部会话、设备与代理凭据，轮换共用凭据，吊销导出令牌，作废验证码与找回密码令牌）；新建账号不受注册策略与邮箱域名名单约束；账号已暂停、正在注销或已是管理员返回 409 `invalid_state`。迁移：接口尚未实现，无兼容影响。
+- `createStaffInvitation`：邮箱已是管理员或已有 `pending` 邀请时返回 400 `invalid_request`（`email` 的 `taken`）。
+
+### 变更
+- `Mfa-Assertion`（总述、请求头参数、`createStepUp`）：5 分钟有效期内可以复用，只在签发它的账号与会话链中有效，会话链被吊销后失效；step-up 只接受 TOTP（M4 起另有 Passkey），恢复码不可用；校验顺序为认证、权限、参数与原因、`Mfa-Assertion`，返回 401 之前不产生副作用。
+- 邀请链接为 `ui.admin.public_url` 加 `accept-invitation#token=<令牌>`，令牌与链接不出现在响应中（`createStaffInvitation` 描述）。
+- `updateStaff`、`removeStaff`：向该账号发送安全通知 `staff_roles_changed`；超级管理员失去 `superadmin` 时，同一事务中撤销其发出的 `pending` 邀请。`deleteRole`：仍被 `pending` 邀请引用的角色返回 409 `invalid_state`。
+- 各操作描述注明写入的审计 `action`（spec/31 CON-09）；接受邀请的审计 `actor_id` 为接受邀请的账号，`diff` 含 `inviter_id`，并发送 `staff_roles_changed`。
+- `suspendAccount`、`resetAccountPassword`、`revokeAccountSessions`、`revokeAccountSession`：目标账号持有管理员角色时只允许 superadmin，否则 403 `forbidden`；暂停最后一个 superadmin 返回 409 `invalid_state`（AUTH-22，实现归 M1-09）。
+- `Problem.challenge_id` 只在登录流程的 `mfa_required` 中附带，敏感操作的 `mfa_required` 只附 `methods`（CONV-16、AUTH-19、AUTH-20）；校验顺序中 428 在 401 之前，ETag 不一致的 409 在 401 之后。
+
+### 修复
+- `createSession` 描述与 `Problem.totp_enrollment`：`totp_enrollment` 的依据改为 AUTH-21。
+- operator 角色的三处权限示例（`createSession`、`getCurrentStaff`、`listRoles`）补 `settings.read`，与内置角色一致。
+- `acceptStaffInvitation` 请求示例的令牌改为 32 字节随机值的 base64url 形式。
+- 两份 OpenAPI 的 `info.version` 改为 0.7.0。
+
+### 安全
+- 堵住接受邀请的接管路径：未验证邮箱的账号可以登录（AUTH-03），他人可以抢先用被邀请的邮箱注册并设置密码与二次验证；此前“已有账号时忽略密码”会让该账号成为管理员。
+
+能否在线执行：可以，不涉及 proto；控制面对应的迁移与实现在 panel 的 M1-02 中完成。
+
 ## v0.6.1（客户端安装包发布签名的 `key_id` 格式）
 
 相对 v0.6.0。依据 workspace spec/02 CONV-30（新增客户端安装包发布签名）、spec/30 接口表，以及评审记录 `review/release-keyid-2026-09-25.md`。只修改描述、示例与响应字段的取值约束，oasdiff 只报告 1 条 info（`response-property-pattern-added`），非破坏性，按补丁版本发布；最低契约版本仍为 v0.6.0。

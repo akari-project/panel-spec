@@ -56,7 +56,7 @@ func (p Problem) String() string {
 
 // Options 控制启用哪些检查。
 type Options struct {
-	// Permissions 为 true 时检查每个操作的 x-permission（管理接口）。
+	// Permissions 为 true 时检查每个操作的 x-permission，以及敏感操作的 401 响应（管理接口）。
 	Permissions bool
 }
 
@@ -143,7 +143,7 @@ func (c *checker) resolve(n *yaml.Node) *yaml.Node {
 	return nil
 }
 
-// checkOperations 做按操作的检查：响应示例、x-permission。
+// checkOperations 做按操作的检查：响应示例、x-permission、敏感操作的 401。
 func (c *checker) checkOperations(opt Options) {
 	paths := get(c.root, "paths")
 	if paths == nil || paths.Kind != yaml.MappingNode {
@@ -166,6 +166,7 @@ func (c *checker) checkOperations(opt Options) {
 			c.checkExamples(op, ptr, label)
 			if opt.Permissions {
 				c.checkPermission(op, ptr, label)
+				c.checkSensitive(op, ptr, method, label)
 			}
 		}
 	}
@@ -262,6 +263,67 @@ func (c *checker) checkPermission(op *yaml.Node, ptr, label string) {
 	if p.Kind != yaml.ScalarNode || (!slices.Contains(PermissionCatalog, p.Value) && !slices.Contains(PermissionSpecial, p.Value)) {
 		c.add(p, ptr+"/x-permission", "%s 的 x-permission %q 不在 AUTH-17 目录中，也不是 none 或 superadmin", label, p.Value)
 	}
+}
+
+// 敏感操作必须引用的组件（spec/10 AUTH-19、spec/31 CON-03）。
+const (
+	mfaRequiredRef    = "#/components/responses/MfaRequired"
+	mfaAssertionRef   = "#/components/parameters/MfaAssertion"
+	auditReasonRef    = "#/components/parameters/AuditReason"
+	mfaAssertionName  = "Mfa-Assertion"
+	auditReasonHeader = "Audit-Reason"
+)
+
+// checkSensitive 双向检查 x-sensitive（spec/10 AUTH-19）：
+//   - x-sensitive 只能是布尔值；
+//   - 敏感操作必须声明 401 并引用 MfaRequired，并声明 Mfa-Assertion 请求头；敏感的 DELETE 还必须声明 Audit-Reason；
+//   - 非敏感操作不得以 MfaRequired 作为 401，避免把普通操作误标成需要 step-up。
+func (c *checker) checkSensitive(op *yaml.Node, ptr, method, label string) {
+	sensitive := false
+	if s := get(op, "x-sensitive"); s != nil {
+		if s.Kind != yaml.ScalarNode || s.ShortTag() != "!!bool" {
+			c.add(s, ptr+"/x-sensitive", "%s 的 x-sensitive 必须是布尔值", label)
+			return
+		}
+		sensitive = s.Value == "true"
+	}
+	var ref string
+	if r := get(get(get(op, "responses"), "401"), "$ref"); r != nil {
+		ref = r.Value
+	}
+	if !sensitive {
+		if ref == mfaRequiredRef {
+			c.add(op, ptr+"/responses/401", "%s 不是敏感操作，401 不得引用 %s（spec/10 AUTH-19）", label, mfaRequiredRef)
+		}
+		return
+	}
+	if ref != mfaRequiredRef {
+		c.add(op, ptr, "%s 是敏感操作，401 必须引用 %s（spec/10 AUTH-19）", label, mfaRequiredRef)
+	}
+	if !c.hasHeaderParam(op, mfaAssertionRef, mfaAssertionName) {
+		c.add(op, ptr, "%s 是敏感操作，必须声明请求头 %s（%s，spec/10 AUTH-19）", label, mfaAssertionName, mfaAssertionRef)
+	}
+	if method == "delete" && !c.hasHeaderParam(op, auditReasonRef, auditReasonHeader) {
+		c.add(op, ptr, "%s 是敏感的 DELETE，必须声明请求头 %s（%s，spec/31 CON-03）", label, auditReasonHeader, auditReasonRef)
+	}
+}
+
+// hasHeaderParam 判断操作是否声明了某个请求头参数：以 $ref 引用给定组件，或内联的同名 header 参数。
+func (c *checker) hasHeaderParam(op *yaml.Node, ref, name string) bool {
+	params := get(op, "parameters")
+	if params == nil || params.Kind != yaml.SequenceNode {
+		return false
+	}
+	for _, p := range params.Content {
+		if r := get(p, "$ref"); r != nil && r.Value == ref {
+			return true
+		}
+		n, in := get(p, "name"), get(p, "in")
+		if n != nil && in != nil && in.Value == "header" && strings.EqualFold(n.Value, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // skipKeys 是不参与禁用词检查的关键字：描述性文字、示例、默认值与 servers。

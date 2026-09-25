@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Client API
-  version: 0.6.1
+  version: 0.7.0
   summary: 用户中心与自研客户端共用的接口
   description: |
     面向用户中心（portal）与自研客户端的接口。规格依据为 spec/30，通用约定见 spec/02；本文件是字段级事实来源。
