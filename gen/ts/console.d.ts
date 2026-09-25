@@ -17,7 +17,7 @@ export interface paths {
          * 管理员登录（必须完成二次验证）
          * @description 两步登录，逻辑同客户端接口的 AUTH-20，但本次登录必须完成二次验证（AUTH-21）：
          *
-         *     1. 提交邮箱与密码。密码正确时一律返回 401 `mfa_required`，附 `challenge_id` 与 `methods`；管理员尚未绑定 TOTP（首次登录）时另附 `totp_enrollment`（AUTH-22）。非管理员账号返回 403 `forbidden`。
+         *     1. 提交邮箱与密码。密码正确时一律返回 401 `mfa_required`，附 `challenge_id` 与 `methods`；管理员尚未绑定 TOTP（首次登录）时另附 `totp_enrollment`（AUTH-21）。非管理员账号返回 403 `forbidden`。
          *     2. 提交 `challenge_id` 与 `totp_code`、`recovery_code`、`webauthn_assertion` 三者之一，不再提交密码。首次绑定时只接受 `totp_code`，成功后响应附 10 个恢复码。
          *
          *     成功时签发受众为 `console` 的访问令牌。令牌不出现在响应体中：访问令牌与刷新令牌分别以 `__Host-console_access_token`、`__Host-console_refresh_token` Cookie（HttpOnly、Secure、SameSite=Strict，Path=/）下发；刷新令牌 12 小时绝对失效、空闲 30 分钟失效（AUTH-21）。每个 challenge 最多尝试 5 次，失败次数计入 AUTH-09 的登录限流。
@@ -100,7 +100,7 @@ export interface paths {
         put?: never;
         /**
          * 重新验证，取得 Mfa-Assertion
-         * @description 完成一次 TOTP 或 Passkey 验证，返回 5 分钟有效的短期令牌，放入敏感操作的 `Mfa-Assertion` 请求头（AUTH-19）。失败次数计入 AUTH-09 的账号失败次数。
+         * @description 完成一次 TOTP 验证（M4 起另有 Passkey；恢复码不可用），返回 5 分钟有效的短期令牌，放入敏感操作的 `Mfa-Assertion` 请求头（AUTH-19）。令牌在有效期内可以复用，只在当前账号与当前会话链中有效，会话链被吊销后失效；受众与访问令牌不同，不能互相替代。成功写审计 `step_up.create`；失败不写审计，失败次数计入 AUTH-09 的账号失败次数（AUTH-18）。
          */
         post: operations["createStepUp"];
         delete?: never;
@@ -120,7 +120,14 @@ export interface paths {
         put?: never;
         /**
          * 接受管理员邀请
-         * @description 被邀请人打开邀请链接后调用。邮箱尚无账号时用 `password` 创建账号；之后通过 `POST /v1/sessions` 登录，首次登录时强制绑定 TOTP（AUTH-22）。令牌无效或过期返回 400，`errors[].code` 为 `invalid_code` 或 `expired`。
+         * @description 被邀请人打开邀请链接（`accept-invitation#token=<令牌>`）后调用，令牌只能使用一次（AUTH-22）。按被邀请邮箱的账号状态处理：
+         *
+         *     1. 没有账号：`password` 必填（缺少返回 400，`errors[]` 为 `{field: password, code: required}`），创建账号，邮箱视为已验证。
+         *     2. 账号存在且邮箱已验证：忽略 `password`，沿用原密码。
+         *     3. 账号存在但邮箱未验证：`password` 必填；替换密码，删除该账号的二次验证，吊销其全部会话，邮箱标记为已验证。
+         *     4. 账号已暂停、正在注销，或已经是管理员：返回 409 `invalid_state`。
+         *
+         *     令牌不存在、已被接受或已撤销返回 400，`errors[]` 为 `{field: token, code: invalid_code}`；已过期为 `{field: token, code: expired}`。成功后通过 `POST /v1/sessions` 登录，首次登录时强制绑定 TOTP（AUTH-21）。写审计 `staff.create`（CON-09）。
          */
         post: operations["acceptStaffInvitation"];
         delete?: never;
@@ -1824,7 +1831,7 @@ export interface paths {
         post?: never;
         /**
          * 移除管理员
-         * @description 移除该账号的全部角色并吊销其管理会话；账号本身保留。移除最后一个 superadmin 返回 409 `invalid_state`。
+         * @description 移除该账号的全部角色并吊销其管理会话；账号本身保留。移除最后一个 superadmin 返回 409 `invalid_state`。向该账号发送安全通知（`staff_roles_changed`）；被移除的是 superadmin 时，同一事务中撤销其发出的全部 `pending` 邀请。写审计 `staff.delete`（CON-09）。
          *
          *     敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
          */
@@ -1833,7 +1840,7 @@ export interface paths {
         head?: never;
         /**
          * 修改管理员角色
-         * @description 只有 superadmin 能分配角色，且不能授予超出自身的权限（AUTH-22）；移除最后一个 superadmin 返回 409 `invalid_state`。变更后吊销该管理员的全部管理会话（AUTH-21）。
+         * @description 只有 superadmin 能分配角色（AUTH-22）；移除最后一个 superadmin 返回 409 `invalid_state`。变更后吊销该管理员的全部管理会话（AUTH-21），并向该账号发送安全通知（`staff_roles_changed`，OPS-04）。该管理员因此失去 `superadmin` 时，同一事务中撤销其发出的全部 `pending` 邀请（每条写审计 `staff_invitation.revoke`）。写审计 `staff.update`（CON-09）。
          *
          *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
@@ -1852,7 +1859,9 @@ export interface paths {
         put?: never;
         /**
          * 邀请管理员
-         * @description 发送一次性邀请邮件，72 小时有效（AUTH-22）；只有 superadmin 能邀请，且不能授予超出自身的权限。
+         * @description 发送一次性邀请邮件，72 小时有效（AUTH-22）；只有 superadmin 能邀请。链接为管理后台公开地址（部署配置 `ui.admin.public_url`）加 `accept-invitation#token=<令牌>`；令牌与链接只通过邮件送达，不出现在响应中。
+         *
+         *     邮箱已是管理员，或同一邮箱已有 `pending` 邀请时，返回 400 `invalid_request`，`errors[]` 为 `{field: email, code: taken}`；需要重发时先撤销旧邀请。角色不存在时 `errors[].code` 为 `invalid_format`（`field` 为 `roles`）。写审计 `staff_invitation.create`（CON-09）。
          *
          *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
@@ -1901,7 +1910,7 @@ export interface paths {
         put?: never;
         /**
          * 创建自定义角色
-         * @description 权限必须是 AUTH-17 权限目录的子集，且不超出操作者自身权限；不能包含 `*`，也不能包含手动标记支付（AUTH-22）。
+         * @description 权限必须是 AUTH-17 权限目录的子集；不能包含 `*` 与 `staff.*`，否则返回 400 `invalid_request`（`errors[].code` 为 `not_allowed`）。手动标记支付不在权限目录中，任何角色都不能被授予（AUTH-22）。
          *
          *     敏感操作（spec/10 AUTH-19）：请求体必须带 `reason`，请求头必须带 `Mfa-Assertion`；`Mfa-Assertion` 缺少或过期返回 401 `mfa_required`。
          */
@@ -1925,7 +1934,7 @@ export interface paths {
         post?: never;
         /**
          * 删除自定义角色
-         * @description 内置角色，或仍有管理员持有的角色，返回 409 `invalid_state`。
+         * @description 内置角色、仍有管理员持有的角色、仍被 `pending` 邀请引用的角色，返回 409 `invalid_state`（AUTH-22）。
          *
          *     敏感操作（spec/10 AUTH-19）：DELETE 不带请求体，原因放在请求头 `Audit-Reason` 中（缺少返回 400 `invalid_request`）；请求头必须带 `Mfa-Assertion`，缺少或过期返回 401 `mfa_required`。
          *
@@ -2108,7 +2117,7 @@ export interface components {
             error_description?: string;
         };
         /**
-         * @description 权限目录（spec/10 AUTH-17）；`*` 只出现在内置角色 superadmin 上
+         * @description 权限目录（spec/10 AUTH-17）；`*` 只出现在内置角色 superadmin 上；`staff.*` 为保留项，不可授予自定义角色（AUTH-22）
          * @enum {string}
          */
         Permission: "accounts.read" | "accounts.adjust" | "credits.adjust" | "orders.read" | "orders.refund" | "plans.*" | "location-groups.*" | "hosts.*" | "kernels.write" | "coupons.*" | "content.*" | "tickets.*" | "payments.configure" | "settings.read" | "settings.write" | "staff.*" | "audit.read" | "*";
@@ -2191,9 +2200,9 @@ export interface components {
             has_passkey: boolean;
         };
         InvitationAcceptance: {
-            /** @description 邀请邮件链接中的一次性令牌（72 小时有效） */
+            /** @description 邀请邮件链接片段中的一次性令牌（32 字节随机值，base64url，72 小时有效） */
             token: string;
-            /** @description 被邀请邮箱尚无账号时必填，用于创建账号 */
+            /** @description 被邀请邮箱没有账号，或已有账号但邮箱未验证时必填（AUTH-22）；邮箱已验证的已有账号忽略此字段 */
             password?: string;
         };
         AccountSummary: {
@@ -3908,13 +3917,14 @@ export interface components {
         RoleCreate: {
             name: string;
             description?: string | null;
-            /** @description 必须是权限目录的子集，且不超出操作者自身权限；不能包含 `*` */
+            /** @description 必须是权限目录的子集；不能包含 `*` 与 `staff.*`（`not_allowed`，AUTH-22） */
             permissions: components["schemas"]["Permission"][];
             /** @description 操作原因，写入审计日志（spec/10 AUTH-18） */
             reason: string;
         };
         RoleUpdate: {
             description?: string | null;
+            /** @description 整体替换；规则同 `RoleCreate.permissions`：不能包含 `*` 与 `staff.*`（`not_allowed`，AUTH-22） */
             permissions?: components["schemas"]["Permission"][];
             /** @description 操作原因，写入审计日志（spec/10 AUTH-18） */
             reason: string;
@@ -4071,6 +4081,15 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description 敏感操作缺少有效的 `Mfa-Assertion`（`mfa_required`，AUTH-19），或未登录（`unauthenticated`）。`mfa_required` 时 `methods` 只列出 step-up 可用的方式，不附 `challenge_id`；调用 `POST /v1/staff/me/step-up` 后重试原请求。 */
+        MfaRequired: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description 未修改（If-None-Match 命中） */
         NotModified: {
             headers: {
@@ -4130,7 +4149,7 @@ export interface components {
         IfMatch: string;
         /** @description 与当前 ETag 相同时返回 304（CONV-13） */
         IfNoneMatch: string;
-        /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+        /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
         MfaAssertion: string;
         /**
          * @description 操作原因，写入审计日志（AUTH-18）。不带请求体的 DELETE 必须携带：值为 UTF-8 百分号编码，上限按解码后计算，为 1 到 500 个 Unicode 码点；`maxLength` 6000 是编码后的上限（500 个码点 × 每个码点最多 4 字节 × 每字节 3 个字符）。缺少、无法解码或超长返回 400 `invalid_request`（`errors[].field` 为 `Audit-Reason`）。
@@ -4196,7 +4215,8 @@ export interface operations {
                      *           "hosts.*",
                      *           "kernels.write",
                      *           "coupons.*",
-                     *           "content.*"
+                     *           "content.*",
+                     *           "settings.read"
                      *         ],
                      *         "is_superadmin": false,
                      *         "has_totp": true,
@@ -4349,7 +4369,8 @@ export interface operations {
                      *         "hosts.*",
                      *         "kernels.write",
                      *         "coupons.*",
-                     *         "content.*"
+                     *         "content.*",
+                     *         "settings.read"
                      *       ],
                      *       "is_superadmin": false,
                      *       "has_totp": true,
@@ -4422,7 +4443,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "token": "inv_8fJ2kQ0zX4vN6pL1",
+                 *       "token": "q4Zr1mX8fJ2kQ0zX4vN6pL1bT7yWc3HdE5sA9uGiK0o",
                  *       "password": "correct-horse-battery"
                  *     }
                  */
@@ -4452,6 +4473,25 @@ export interface operations {
                     "application/json": components["schemas"]["Staff"];
                 };
             };
+            /** @description 令牌无效、过期，或缺少密码 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 账号状态不允许 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
             default: components["responses"]["Problem"];
         };
     };
@@ -4683,7 +4723,7 @@ export interface operations {
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
             };
             path: {
@@ -4721,6 +4761,7 @@ export interface operations {
                     "application/json": components["schemas"]["AccountSummary"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 不能注销 */
             409: {
                 headers: {
@@ -5124,7 +5165,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
@@ -5162,6 +5203,7 @@ export interface operations {
                     "application/json": components["schemas"]["PasswordReset"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             default: components["responses"]["Problem"];
         };
     };
@@ -5219,7 +5261,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
@@ -5265,6 +5307,7 @@ export interface operations {
                     "application/json": components["schemas"]["DataExport"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             default: components["responses"]["Problem"];
         };
     };
@@ -5950,7 +5993,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
@@ -6003,6 +6046,7 @@ export interface operations {
                     "application/json": components["schemas"]["CreditAdjustment"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             default: components["responses"]["Problem"];
         };
     };
@@ -6458,7 +6502,7 @@ export interface operations {
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /**
                  * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
@@ -6530,6 +6574,7 @@ export interface operations {
                     "application/json": components["schemas"]["Plan"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 版本冲突 */
             409: {
                 headers: {
@@ -6870,7 +6915,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
@@ -6921,6 +6966,7 @@ export interface operations {
                     "application/json": components["schemas"]["Rollout"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             default: components["responses"]["Problem"];
         };
     };
@@ -8104,7 +8150,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
@@ -8143,6 +8189,7 @@ export interface operations {
                     "application/json": components["schemas"]["KeyRevocation"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             default: components["responses"]["Problem"];
         };
     };
@@ -8957,7 +9004,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /**
                  * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
@@ -9009,6 +9056,7 @@ export interface operations {
                     "application/json": components["schemas"]["HostKernel"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 冲突 */
             409: {
                 headers: {
@@ -9453,7 +9501,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
@@ -9502,6 +9550,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refund"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 状态不允许 */
             409: {
                 headers: {
@@ -9559,7 +9608,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
@@ -9623,6 +9672,7 @@ export interface operations {
                     "application/json": components["schemas"]["Order"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 状态不允许 */
             409: {
                 headers: {
@@ -9727,7 +9777,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /**
                  * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
@@ -9780,6 +9830,7 @@ export interface operations {
                     "application/json": components["schemas"]["AlipayF2fConfig"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 冲突 */
             409: {
                 headers: {
@@ -12293,7 +12344,7 @@ export interface operations {
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
             };
             path: {
@@ -12311,6 +12362,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 状态不允许 */
             409: {
                 headers: {
@@ -12327,7 +12379,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
             };
             path: {
@@ -12374,6 +12426,7 @@ export interface operations {
                     "application/json": components["schemas"]["Staff"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 状态不允许 */
             409: {
                 headers: {
@@ -12437,7 +12490,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
@@ -12482,6 +12535,16 @@ export interface operations {
                     "application/json": components["schemas"]["StaffInvitation"];
                 };
             };
+            /** @description 参数错误 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            401: components["responses"]["MfaRequired"];
             default: components["responses"]["Problem"];
         };
     };
@@ -12531,7 +12594,7 @@ export interface operations {
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
             };
             path: {
@@ -12549,6 +12612,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 状态不允许 */
             409: {
                 headers: {
@@ -12591,7 +12655,8 @@ export interface operations {
                      *             "hosts.*",
                      *             "kernels.write",
                      *             "coupons.*",
-                     *             "content.*"
+                     *             "content.*",
+                     *             "settings.read"
                      *           ],
                      *           "is_builtin": true,
                      *           "staff_count": 2,
@@ -12625,7 +12690,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
@@ -12674,6 +12739,7 @@ export interface operations {
                     "application/json": components["schemas"]["Role"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             default: components["responses"]["Problem"];
         };
     };
@@ -12729,7 +12795,7 @@ export interface operations {
                  * @example %E5%91%98%E5%B7%A5%E7%A6%BB%E8%81%8C
                  */
                 "Audit-Reason"?: components["parameters"]["AuditReason"];
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /**
                  * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
@@ -12752,6 +12818,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 状态不允许 */
             409: {
                 headers: {
@@ -12769,7 +12836,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /**
                  * @description 必须携带：资源当前的强 ETag。缺少返回 428 `precondition_required`，不一致返回 409 `conflict`（CONV-28）。
@@ -12824,6 +12891,7 @@ export interface operations {
                     "application/json": components["schemas"]["Role"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             /** @description 状态不允许 */
             409: {
                 headers: {
@@ -13014,7 +13082,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19）。缺少或过期返回 401 `mfa_required`。 */
+                /** @description 敏感操作必须携带：5 分钟内由 `POST /v1/staff/me/step-up` 取得的短期令牌（AUTH-19），有效期内可以复用，只在签发它的会话链中有效。缺少、过期、签名无效或会话链不符返回 401 `mfa_required`（响应 `MfaRequired`）。 */
                 "Mfa-Assertion"?: components["parameters"]["MfaAssertion"];
                 /** @description 幂等键（CONV-12）：相同键与请求体返回相同结果；不同请求体返回 422 `idempotency_key_reused`；首个请求仍在处理时返回 409 `conflict`。 */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
@@ -13066,6 +13134,7 @@ export interface operations {
                     "application/json": components["schemas"]["AuditExport"];
                 };
             };
+            401: components["responses"]["MfaRequired"];
             default: components["responses"]["Problem"];
         };
     };

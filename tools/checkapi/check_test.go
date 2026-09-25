@@ -314,6 +314,29 @@ schemas:
 			console: true,
 		},
 		{
+			name: "sensitive op with MfaRequired 401",
+			doc: doc(strings.Replace(okOp, "    responses:\n", "    x-sensitive: true\n    responses:\n      '401':\n        $ref: '#/components/responses/MfaRequired'\n", 1),
+				"responses:\n  MfaRequired:\n    description: x\n"),
+			console: true,
+		},
+		{
+			name:    "sensitive op without 401",
+			doc:     doc(strings.Replace(okOp, "    responses:\n", "    x-sensitive: true\n    responses:\n", 1), ""),
+			console: true,
+			want:    []string{"GET /v1/me 是敏感操作，401 必须引用 #/components/responses/MfaRequired"},
+		},
+		{
+			name: "sensitive op with other 401",
+			doc: doc(strings.Replace(okOp, "    responses:\n", "    x-sensitive: true\n    responses:\n      '401':\n        $ref: '#/components/responses/Problem'\n", 1),
+				"responses:\n  Problem:\n    description: x\n"),
+			console: true,
+			want:    []string{"401 必须引用"},
+		},
+		{
+			name: "x-sensitive ignored outside console",
+			doc:  doc(strings.Replace(okOp, "    responses:\n", "    x-sensitive: true\n    responses:\n", 1), ""),
+		},
+		{
 			name:    "x-permission not scalar",
 			doc:     doc(strings.Replace(okOp, "x-permission: accounts.read", "x-permission: [accounts.read]", 1), ""),
 			console: true,

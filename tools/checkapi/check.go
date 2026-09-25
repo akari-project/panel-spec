@@ -56,7 +56,7 @@ func (p Problem) String() string {
 
 // Options 控制启用哪些检查。
 type Options struct {
-	// Permissions 为 true 时检查每个操作的 x-permission（管理接口）。
+	// Permissions 为 true 时检查每个操作的 x-permission，以及敏感操作的 401 响应（管理接口）。
 	Permissions bool
 }
 
@@ -143,7 +143,7 @@ func (c *checker) resolve(n *yaml.Node) *yaml.Node {
 	return nil
 }
 
-// checkOperations 做按操作的检查：响应示例、x-permission。
+// checkOperations 做按操作的检查：响应示例、x-permission、敏感操作的 401。
 func (c *checker) checkOperations(opt Options) {
 	paths := get(c.root, "paths")
 	if paths == nil || paths.Kind != yaml.MappingNode {
@@ -166,6 +166,7 @@ func (c *checker) checkOperations(opt Options) {
 			c.checkExamples(op, ptr, label)
 			if opt.Permissions {
 				c.checkPermission(op, ptr, label)
+				c.checkSensitive(op, ptr, label)
 			}
 		}
 	}
@@ -261,6 +262,22 @@ func (c *checker) checkPermission(op *yaml.Node, ptr, label string) {
 	}
 	if p.Kind != yaml.ScalarNode || (!slices.Contains(PermissionCatalog, p.Value) && !slices.Contains(PermissionSpecial, p.Value)) {
 		c.add(p, ptr+"/x-permission", "%s 的 x-permission %q 不在 AUTH-17 目录中，也不是 none 或 superadmin", label, p.Value)
+	}
+}
+
+// mfaRequiredRef 是敏感操作 401 必须引用的响应（spec/10 AUTH-19）。
+const mfaRequiredRef = "#/components/responses/MfaRequired"
+
+// checkSensitive：x-sensitive: true 的操作必须声明 401 并引用 MfaRequired，
+// 使客户端生成代码与 Mock 覆盖缺少 Mfa-Assertion 的情形（spec/10 AUTH-19）。
+func (c *checker) checkSensitive(op *yaml.Node, ptr, label string) {
+	s := get(op, "x-sensitive")
+	if s == nil || s.Kind != yaml.ScalarNode || s.Value != "true" {
+		return
+	}
+	r := get(get(get(op, "responses"), "401"), "$ref")
+	if r == nil || r.Value != mfaRequiredRef {
+		c.add(s, ptr+"/x-sensitive", "%s 是敏感操作，401 必须引用 %s（spec/10 AUTH-19）", label, mfaRequiredRef)
 	}
 }
 
