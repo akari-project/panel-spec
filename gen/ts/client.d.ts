@@ -338,7 +338,7 @@ export interface paths {
         put?: never;
         /**
          * 用户中心提交 user_code 批准设备授权
-         * @description AUTH-24。`user_code` 无效返回 400 `invalid_code`，过期返回 `expired`。
+         * @description AUTH-24。需要重新验证（AUTH-23）。`user_code` 无效返回 400 `invalid_code`，过期返回 `expired`。
          */
         post: operations["approveDeviceAuthorization"];
         delete?: never;
@@ -400,7 +400,7 @@ export interface paths {
         put?: never;
         /**
          * 带校验数字批准扫码登录
-         * @description `check_digits` 与新设备不一致时返回 400（`errors[].code` 为 `invalid_code`），多次失败后请求作废
+         * @description 需要重新验证（AUTH-23）。`check_digits` 与新设备不一致时返回 400（`errors[].code` 为 `invalid_code`），多次失败后请求作废
          *     （`exhausted`）。非 web 批准方用本设备私钥签名，签名对象见 `device_signature`（AUTH-24）。
          *     请求已批准、已过期时返回 409 `invalid_state`。
          */
@@ -3169,7 +3169,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthenticated"];
+            401: components["responses"]["MfaRequired"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["IdempotencyKeyReused"];
             429: components["responses"]["TooManyRequests"];
@@ -3311,7 +3311,7 @@ export interface operations {
                 content?: never;
             };
             400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthenticated"];
+            401: components["responses"]["MfaRequired"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["InvalidState"];
             422: components["responses"]["IdempotencyKeyReused"];
