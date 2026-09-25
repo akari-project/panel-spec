@@ -3,6 +3,26 @@
 
 格式遵循 spec/42 42.5：每个版本分为新增、变更、修复、安全四部分。1.0 之前的小版本允许破坏性变更，但必须在此说明迁移方法（ENG-04）。
 
+## v0.6.1（客户端安装包发布签名的 `key_id` 格式）
+
+相对 v0.6.0。依据 workspace spec/02 CONV-30（新增客户端安装包发布签名）、spec/30 接口表，以及评审记录 `review/release-keyid-2026-09-25.md`。只修改描述、示例与响应字段的取值约束，oasdiff 只报告 1 条 info（`response-property-pattern-added`），非破坏性，按补丁版本发布；最低契约版本仍为 v0.6.0。
+
+### 新增
+- 无。
+
+### 变更
+- `Release.key_id`（`GET /v1/releases/latest`）增加描述与模式：1–255 的十进制字符串，与 `SignedConfig.key_id` 相同（CONV-30）。迁移：接口尚未实现，无兼容影响。
+- `Release.signature` 增加描述：Ed25519 签名，64 字节，标准 base64 编码；密钥由发布流程离线保管，不在控制面中；签名输入在自研客户端立项时比照 spec/40 DEP-09 定义（workspace `backlog/M5.md`）。
+
+### 修复
+- `getLatestRelease` 示例：`key_id` 由 `rel-2026-01` 改为 `'1'`；`signature` 改为与 Ed25519 签名等长的 base64 值（此前的示例形似 ECDSA DER 编码）。
+- 两份 OpenAPI 的 `info.version` 改为 0.6.1。
+
+### 安全
+- 无。
+
+能否在线执行：可以，不涉及 proto 与数据库，控制面与前端无需修改。
+
 ## v0.6.0（M1-01 后续：运营模块开关 features 的语义、批准新设备需要重新验证）
 
 相对 v0.5.0。依据 workspace spec/03 3.6、spec/13 OPS-08、spec/30 API-11、spec/10 AUTH-23、AUTH-24、spec/02 CONV-12，以及评审记录 `review/features-spec-debate-2026-09-25.md`（含“C2 定案”）。含语义变更（`features` 返回有效值、更新按键合并并拒绝开启未实现的模块；批准设备授权与扫码登录需要重新验证），按 ENG-04 升小版本。最低契约版本为 v0.6.0。
