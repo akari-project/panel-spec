@@ -152,7 +152,7 @@ message AgentUpgrade {
   // 其中 sha256 为 32 字节字节串，与其他字节串一样按 “|” 规则前置 4 字节大端长度。
   // 签名把版本号与制品摘要绑定在一起（spec/40 DEP-09）；测试向量见 testdata/node-v1-vectors.json 的 agent_upgrade。
   bytes signature = 4;
-  uint32 key_id = 5; // Agent 内置“当前”与“下一把”两个公钥，按 key_id 选择（spec/40 DEP-09）
+  uint32 key_id = 5; // 取值 1–255（CONV-30）；Agent 内置“当前”与“下一把”两个公钥，按 key_id 选择（spec/40 DEP-09）
 }
 
 // 第三方共用凭据的全局活跃来源集合，仅发给声明 supports_source_limit 的节点（spec/22 ACC-12，M4-06）。
