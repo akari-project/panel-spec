@@ -3757,6 +3757,7 @@ export interface components {
             registration_policy: "open" | "invite_only" | "closed";
             email_domain_allowlist?: string[];
             email_domain_denylist?: string[];
+            /** @description 没有任何权益的账号显示的设备上限；这类账号不下发设备凭据。持有免费套餐权益时取权益快照（AUTH-14） */
             free_device_limit: number;
             /**
              * Format: uuid
@@ -3837,6 +3838,7 @@ export interface components {
             registration_policy?: "open" | "invite_only" | "closed";
             email_domain_allowlist?: string[];
             email_domain_denylist?: string[];
+            /** @description 没有任何权益的账号显示的设备上限；这类账号不下发设备凭据。持有免费套餐权益时取权益快照（AUTH-14） */
             free_device_limit?: number;
             /**
              * Format: uuid
