@@ -3,6 +3,37 @@
 
 格式遵循 spec/42 42.5：每个版本分为新增、变更、修复、安全四部分。1.0 之前的小版本允许破坏性变更，但必须在此说明迁移方法（ENG-04）。
 
+## v0.8.0（M1-04 前置：套餐、价格、线路组的管理约束）
+
+相对 v0.7.0。依据 workspace spec/11 BIL-01、BIL-15、BIL-26、ACS-06，spec/31 CON-05、CON-07、CON-09，以及评审记录 `review/m1-04-spec-gaps-2026-09-26.md`。oasdiff 无破坏性变更，只报告新增非成功响应与响应字段；但套餐删除、`kind` 修改与上架条件是语义变更，按 ENG-04 升小版本。proto 只改一处注释。
+
+### 新增
+- `createPlan` 声明 400（`tier` 的 `out_of_range`、`kind` 的 `taken`）与 409 `invalid_state`（非免费套餐不能以 `on_sale` 新建）。
+- `updatePlan` 声明 400（同上）与 409 `invalid_state` 示例。
+- `createPlanPrice` 声明 400（`period`、`period_days`、`currency` 的 `not_allowed`，附 `period` 与 `currency` 示例）与 409 `invalid_state`（免费套餐不设价格行；站点尚未初始化结算货币，CONV-08），各附示例。
+- `discontinuePlanPrice` 声明 409 `invalid_state`：`on_sale` 套餐不能停售最后一行在售价格。
+- `StaffMe.site_currency`（必填、可空、只读）：站点结算货币，`null` 表示站点尚未初始化；与 `Settings.currency` 相同，供只有 `plans.*` 而没有 `settings.read` 的管理员录入价格时使用（CONV-08）。`StaffMe` 同时出现在 `GET /v1/staff/me` 与 `POST /v1/sessions` 的 201 响应（`ConsoleSession.staff`）中，两处示例都已补上。
+- `updateSettings` 声明 400（`free_plan_id` 的 `not_allowed` 示例）。
+
+### 变更（破坏性）
+- `deletePlan`：条件由“从未产生权益与订单”改为“既没有价格行、也没有权益、且未被设置 `free_plan_id` 引用”，与价格行不可删除一致（BIL-26）。迁移：接口尚未实现（M1-04），无兼容影响。
+- `updatePlan`：`kind` 只在套餐既没有价格行、也没有权益时可以修改；按修改后的状态检查，状态为 `on_sale` 的非免费套餐必须有在售价格（包括 `on_sale` 的免费套餐改为非免费）；已有权益的套餐不能改回 `draft`；一个站点至多一个免费套餐；被设置 `free_plan_id` 引用的套餐不能修改 `kind`。免费套餐的状态没有启用含义，启用仍由 `Settings.free_plan_id` 决定（BIL-15）。迁移：同上。
+- `deleteLocationGroup`：仍有节点成员时同样返回 409 `invalid_state`（ACS-06）。
+- `Settings.free_plan_id`、`SettingsUpdate.free_plan_id`：非空时必须引用免费套餐，否则返回 400（`free_plan_id`、`not_allowed`）；`updateSettings` 写明启用与关闭时授予或结束全部免费权益，执行方式由 M1-05/M1-09 定义（BIL-15）。
+
+### 变更
+- `listPlans`（管理接口）：按 `sort`、`id` 升序分页，包括全部状态与免费套餐；游标示例改为按 `sort` 编码。`listLocationGroups`：按 `created_at`、`id` 升序分页，写入描述。
+- `previewPlanImpact`、`previewLocationGroupImpact`、`ImpactPreview`：受影响账号按不同账号计，口径与 `active_entitlement_count` 相同；M2 之前 `affected_host_count` 为 0，凭据增减省略（CON-07、BIL-26）。
+- ETag 由版本列或 `updated_at` 生成（套餐与线路组用版本列，价格行用 `updated_at`）。`Plan.prices` 与线路组关联的变化使套餐 ETag 改变；`LocationGroup.host_count` 只随增减成员变化，随线路组版本变化，节点状态变化不影响；`Plan.active_entitlement_count`（等于不同账号数，BIL-05）与 `LocationGroup.plan_ids` 为派生字段，不参与 ETag（CON-05）。
+- `PlanCreate.status` 标注默认值 `draft`。
+- 套餐、价格行、线路组各写操作的描述注明审计 `action`（CON-09）。
+- 客户端 `listPlans`：不列出免费套餐与没有在售价格行的套餐；`Plan.kind` 注明不返回 `free`；`Plan.location_count` 定义为持有该套餐的用户在 `GET /v1/locations` 中 `is_accessible` 为真的节点的不同 `region_code` 数。
+- 附带（workspace backlog M1-01 中排队的“下次修改契约时顺带写上”）：`getSettings` 的 `registration_policy`、`email_domain_*`、`min_version`、`features` 返回有效值，存储值异常时按 spec/03 3.6 读取总则处理。
+- 附带（同上）：`messages.proto` 中 `AgentUpgrade.key_id` 的注释写明取值 1–255（CONV-30），只改注释。
+- 两份 OpenAPI 的 `info.version` 改为 0.8.0。
+
+能否在线执行：可以，proto 只改注释；控制面对应的迁移与实现在 panel 的 M1-04 中完成。
+
 ## v0.7.0（M1-02 前置：管理员与角色只允许超级管理员、Mfa-Assertion、接受邀请的规则）
 
 相对 v0.6.1。依据 workspace spec/10 AUTH-17、AUTH-18、AUTH-19、AUTH-22，spec/31 CON-09，以及评审记录 `review/m1-02-spec-gaps-2026-09-25.md`。oasdiff 无错误与警告，只报告新增非成功响应的 info；但权限与接受邀请的规则是语义变更，按 ENG-04 升小版本。最低契约版本为 v0.7.0。
