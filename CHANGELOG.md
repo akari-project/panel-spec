@@ -3,6 +3,30 @@
 
 格式遵循 spec/42 42.5：每个版本分为新增、变更、修复、安全四部分。1.0 之前的小版本允许破坏性变更，但必须在此说明迁移方法（ENG-04）。
 
+## v0.9.0（M1-03 前置：设备名额、免费套餐凭据与导入链接）
+
+相对 v0.8.0。依据 workspace spec/10 AUTH-14、AUTH-15、AUTH-16，spec/11 ACS-01，spec/23 EXP-06，以及评审记录 `review/m1-03-spec-gaps-2026-09-27.md`。结构上只新增 `removeDevice` 204 响应的 `Set-Cookie` 头，其余为描述与示例；buf breaking 与 oasdiff 均无破坏性变更，proto 未改。但 `credential_status`、`cycle`、导出配置与 `Subscription-Userinfo` 对免费套餐权益的含义改变，是语义变更，按 ENG-04 升小版本。
+
+### 新增
+- `removeDevice` 的 204 响应声明 `Set-Cookie`：移除的是当前 web 设备时清除认证 Cookie，与 `deleteCurrentSession` 相同（AUTH-15）。
+
+### 变更（语义）
+- `CredentialStatus`、`getMyConfiguration`：`entitlement_inactive` 收窄为没有权益、或权益为 `over_quota`、`suspended`；持有 `active` 的免费套餐权益（`entitlement_status` 为 `free`）时在免费套餐的设备上限内获得凭据与其可访问的入站（ACS-01）。权益状态优先：设备已有凭据但权益不是 `active` 时为 `entitlement_inactive`，凭据不吊销；`credential_status` 不是 `issued` 时 `credential` 为 null。
+- `exportConfiguration`：持有 `active` 的免费套餐权益时按其可访问的线路组返回入站（EXP-06）；`Subscription-Userinfo` 在权益没有到期时间（免费套餐权益）时省略 `expire`。
+- `getUsage`：只有没有当前权益（`entitlement_status` 为 `none`）时 `cycle` 为 null；免费套餐权益返回其流量周期。
+- 迁移（ENG-04）：客户端与用户中心不能再把 `entitlement_status='free'` 等同于“没有凭据、没有周期、没有入站”，应以 `credential_status`、`cycle` 是否为 null 与返回的入站为准；`Subscription-Userinfo` 的解析方要允许缺少 `expire`。控制面尚未实现 `getMyConfiguration`、`exportConfiguration`（M2-07）与免费套餐的授予（M1-05），登录响应的 `credential_status` 与 `getUsage` 由 M1-03 起按新口径返回；没有已部署的客户端依赖旧口径。
+
+### 变更
+- `listDevices`：`has_credential` 为假的原因补全；占用名额的是持有凭据的非 web 设备（AUTH-14）。`listDevices.device_limit` 与 `Me.device_limit` 写明同一来源：有权益（含免费套餐权益）时取权益快照，没有权益时为 `free_device_limit`（只用于显示）。
+- `removeDevice`：吊销该设备全部会话与凭据，空余名额按 `last_seen_at` 分给其他设备；web 设备可移除，移除当前设备等同登出；不需要重新验证（AUTH-15）。
+- `getExportLink`、`rotateExportLink`、`ExportLink`：令牌为 32 字节随机值的 base64url（无填充），账号创建时生成；缺失时（AUTH-22 重置后）读取时补建，重置时同样补建（backfill on rotate）；`url` 的根地址与 `api_endpoints` 主地址相同，不取自请求的 Host；`created_at` 为最近一次生成或重置的时刻；重置不接受 `Idempotency-Key`，未重新验证时不做修改（AUTH-16、CONV-12）。示例令牌改为 32 字节的合法 base64url（43 字符）。
+- 管理接口 `Settings.free_device_limit`、`SettingsUpdate.free_device_limit` 补描述：只用于没有权益的账号的显示；持有免费套餐权益时取权益快照（AUTH-14）。
+
+### 修复
+- 管理接口 `info.version` 在 v0.8.0 中漏改，仍为 0.7.0；两份 OpenAPI 的 `info.version` 改为 0.9.0。
+
+能否在线执行：可以，proto 未改；契约新增的只是响应头与描述，控制面按新口径的实现在 panel 的 M1-03 中完成，M2-07 与 M1-05 实现时遵循本版描述。
+
 ## v0.8.0（M1-04 前置：套餐、价格、线路组的管理约束）
 
 相对 v0.7.0。依据 workspace spec/11 BIL-01、BIL-15、BIL-26、ACS-06，spec/31 CON-05、CON-07、CON-09，以及评审记录 `review/m1-04-spec-gaps-2026-09-26.md`。oasdiff 无破坏性变更，只报告新增非成功响应与响应字段；但套餐删除、`kind` 修改与上架条件是语义变更，按 ENG-04 升小版本。proto 只改一处注释。
